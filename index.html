@@ -256,7 +256,7 @@ footer.colophon {
       </div>
       <div class="plate-id" aria-label="Rendering details">
         <span>NGC 4594 · M104 · Sa</span>
-        <span>d = 9.55 Mpc · i = 84°</span>
+        <span>d = 9.55 Mpc · seen from Earth at i = 84°</span>
         <span>Live ΛCDM halo model</span>
       </div>
     </div>
@@ -525,7 +525,18 @@ const GRF = (() => {
   const o = [0, 0, 0];
   for (let i = 0; i < S; i++) { raw((rnd() - .5) * 8000, (rnd() - .5) * 8000, (rnd() - .5) * 8000, o); rms += o[0] ** 2 + o[1] ** 2 + o[2] ** 2; }
   const scale = 300 / Math.sqrt(rms / S);    // rms displacement 300 comoving kpc at a = 1
-  return (x, y, z) => { const r = raw(x, y, z, [0, 0, 0]); return [r[0] * scale, r[1] * scale, r[2] * scale]; };
+  const fn = (x, y, z) => { const r = raw(x, y, z, [0, 0, 0]); return [r[0] * scale, r[1] * scale, r[2] * scale]; };
+  fn.jac = (x, y, z) => {                       // psi and its deformation tensor J_ij = d psi_i / d q_j
+    const P = [0, 0, 0], J = new Float32Array(9);
+    for (const m of modes) {
+      const ph = m.kx * x + m.ky * y + m.kz * z + m.ph, sA = m.A * Math.sin(ph) * scale, cA = m.A * Math.cos(ph) * scale;
+      P[0] += sA * m.dx; P[1] += sA * m.dy; P[2] += sA * m.dz;
+      const d = [m.dx, m.dy, m.dz], k = [m.kx, m.ky, m.kz];
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) J[i * 3 + j] += cA * d[i] * k[j];
+    }
+    return [P, J];
+  };
+  return fn;
 })();
 
 /* Spherical collapse (Gunn & Gott 1972; Bertschinger 1985 secondary infall).
@@ -825,8 +836,7 @@ function buildHalo(N) {
       }
       float bright = 0.5*pow(hs, -1.45)*gain;                 // ~ projected density, compressed range
       float fade = smoothstep(1.5, 10.0, length(world - cameraPosition));
-      vec3 tint = mix(vec3(0.8, 0.8, 1.0), uDMCol, smoothstep(1.2, 9.0, hs));   // dense cusp reads paler
-      vec3 c = tint*bright*fade*uVis;
+      vec3 c = vec3(bright*fade*uVis);                        // scalar density; coloured in post
       emit(world, hsDraw, c);
     }`, {
     uVis: { value: 1 }, uR200: { value: R200 }, uIntro: { value: 0 },
@@ -883,64 +893,76 @@ function buildSubhaloParticles() {
       vec4 c = texelFetch(uSubTex, ivec2(int(aSub), 0), 0);
       vec3 world = c.xyz + aOff*c.w;
       float fade = smoothstep(1.5, 10.0, length(world - cameraPosition));
-      emit(world, aSz*c.w, uSubCol*pow(aSz/3.0, -0.6)*fade*uVis);
+      emit(world, aSz*c.w, vec3(pow(aSz/3.0, -0.6)*fade*uVis));
     }`, { uSubTex: { value: subTex }, uVis: { value: 1 }, uSubCol: { value: new THREE.Color(0.55, 0.65, 1.0) } });
   return new THREE.Points(g, mat);
 }
 
-/* ---- 4e. Cosmic web: Zel'dovich flow onto filaments that meet at the halo -------------- */
-function buildWeb(N) {
-  const aQ = new Float32Array(N * 3), aPsi = new Float32Array(N * 3), aSz = new Float32Array(N);
+/* ---- 4e. Cosmic web: filaments into the node + a Zel'dovich lattice (density from det(I + aJ)) ---- */
+function buildWeb() {
+  // calibrate the Zel'dovich amplitude so the field is well past shell crossing at a = 1
+  let jr = 0; for (let i = 0; i < 300; i++) { const [, J] = GRF.jac((rnd() - .5) * 12000, (rnd() - .5) * 12000, (rnd() - .5) * 12000); jr += J[0] ** 2 + J[4] ** 2 + J[8] ** 2; }
+  const AMP = 1.25 / Math.sqrt(jr / 900);
+  const nl = Math.round(40 * Math.cbrt(Q)), box = 7200, sp = 2 * box / nl;
+  const lattice = [];
+  for (let i = 0; i < nl; i++) for (let j = 0; j < nl; j++) for (let k = 0; k < nl; k++) {
+    const q = [-box + (i + 0.5 + (rnd() - .5) * 0.35) * sp, -box + (j + 0.5 + (rnd() - .5) * 0.35) * sp, -box + (k + 0.5 + (rnd() - .5) * 0.35) * sp];
+    const rq = Math.hypot(...q); if (rq < 2400 || rq > 7600) continue;
+    lattice.push(q);
+  }
+  const NF = Math.round(30000 * Q), N = NF + lattice.length;
+  const aQ = new Float32Array(N * 3), aPsi = new Float32Array(N * 3), aSz = new Float32Array(N), aJ0 = new Float32Array(N * 3), aJ1 = new Float32Array(N * 3), aJ2 = new Float32Array(N * 3);
   const FIL = [];
-  const dirs = [[0.82, 0.35, 0.45], [-0.7, 0.2, 0.68], [-0.25, -0.55, -0.8], [0.35, -0.85, 0.1], [-0.6, 0.75, -0.3]];
+  const dirs = [[0.82, 0.35, 0.45], [-0.7, 0.2, 0.68], [-0.25, -0.55, -0.8], [0.35, -0.85, 0.1], [-0.6, 0.75, -0.3], [0.1, 0.95, 0.3], [0.9, -0.2, -0.4], [-0.95, -0.3, 0.1], [0.2, 0.1, -0.98]];
   dirs.forEach((d0, j) => {
     const d = norm3(d0); const off = unit();
-    const L = 4800 + 1500 * rnd();
-    const ctrl = [d[0] * L * 0.5 + off[0] * 1700, d[1] * L * 0.5 + off[1] * 1700, d[2] * L * 0.5 + off[2] * 1700];
-    const end = [d[0] * L, d[1] * L, d[2] * L];
-    const knots = Array.from({ length: 9 }, () => 0.15 + 0.85 * rnd());
-    FIL.push({ ctrl, end, knots, w: j < 3 ? 1 : 0.6 });
+    const L = (j < 5 ? 4800 : 3200) + 1500 * rnd();
+    FIL.push({ ctrl: [d[0] * L * 0.5 + off[0] * 1700, d[1] * L * 0.5 + off[1] * 1700, d[2] * L * 0.5 + off[2] * 1700], end: [d[0] * L, d[1] * L, d[2] * L], knots: Array.from({ length: 9 }, () => 0.15 + 0.85 * rnd()), w: j < 3 ? 1 : j < 5 ? 0.7 : 0.45 });
   });
-  const bez = (F, s) => { const a = (1 - s) * (1 - s), b = 2 * (1 - s) * s, c = s * s; return [b * F.ctrl[0] + c * F.end[0], b * F.ctrl[1] + c * F.end[1], b * F.ctrl[2] + c * F.end[2]]; };
-  for (let i = 0; i < N; i++) {
-    let fin, q;
-    const kind = rnd();
-    if (kind < 0.72) {
-      const F = FIL[Math.floor(rnd() * FIL.length)];
-      const knot = rnd() < 0.2;
-      let s = knot ? F.knots[Math.floor(rnd() * F.knots.length)] + gauss() * 0.004 : Math.pow(rnd(), 1.35);
-      s = clamp(s, 0.07, 1);
-      const c = bez(F, s), c2 = bez(F, Math.min(1, s + 0.01));
-      const tan = norm3([c2[0] - c[0], c2[1] - c[1], c2[2] - c[2]]);
-      const p1 = norm3(cross(tan, [0.3, 1, 0.2])), p2 = cross(tan, p1);
-      const sigF = knot ? 28 : (70 + 230 * s) * F.w;                       // final cross-section (gaussian)
-      const squeeze = knot ? 0.05 : 0.16;                                   // collapsed from a ~6x wider Lagrangian tube
-      const ox = gauss() * sigF / squeeze, oy = gauss() * sigF / squeeze;
-      fin = [c[0] + (p1[0] * ox + p2[0] * oy) * squeeze, c[1] + (p1[1] * ox + p2[1] * oy) * squeeze, c[2] + (p1[2] * ox + p2[2] * oy) * squeeze];
-      const along = 1.0 + 1.8 * (1 - s) ** 2;                            // inflow along the filament toward the node
-      const qb = [c[0] * along, c[1] * along, c[2] * along];
-      q = [qb[0] + p1[0] * ox + p2[0] * oy, qb[1] + p1[1] * ox + p2[1] * oy, qb[2] + p1[2] * ox + p2[2] * oy];
-      aSz[i] = knot ? 22 : 40 + 70 * s;
-    } else {                                                            // field / sheets: weakly displaced
-      const d = unit(), r = Math.cbrt(rnd() * (6200 ** 3 - 3300 ** 3) + 3300 ** 3);
-      q = [d[0] * r, d[1] * r, d[2] * r];
-      const ps = GRF(q[0], q[1], q[2]); fin = [q[0] + ps[0] * 1.6, q[1] + ps[1] * 1.6, q[2] + ps[2] * 1.6];
-      aSz[i] = 70;
-    }
+  const bez = (F, s) => { const b = 2 * (1 - s) * s, c = s * s; return [b * F.ctrl[0] + c * F.end[0], b * F.ctrl[1] + c * F.end[1], b * F.ctrl[2] + c * F.end[2]]; };
+  for (let i = 0; i < NF; i++) {
+    const F = FIL[Math.floor(Math.pow(rnd(), 1.4) * FIL.length)];
+    const knot = rnd() < 0.2;
+    let s = knot ? F.knots[Math.floor(rnd() * F.knots.length)] + gauss() * 0.004 : Math.pow(rnd(), 1.35);
+    s = clamp(s, 0.07, 1);
+    const c = bez(F, s), c2 = bez(F, Math.min(1, s + 0.01));
+    const tan = norm3([c2[0] - c[0], c2[1] - c[1], c2[2] - c[2]]);
+    const p1 = norm3(cross(tan, [0.3, 1, 0.2])), p2 = cross(tan, p1);
+    const sigF = knot ? 28 : (70 + 230 * s) * F.w;                         // final cross-section (gaussian)
+    const squeeze = knot ? 0.05 : 0.16;                                     // collapsed from a ~6x wider Lagrangian tube
+    const ox = gauss() * sigF / squeeze, oy = gauss() * sigF / squeeze;
+    const fin = [c[0] + (p1[0] * ox + p2[0] * oy) * squeeze, c[1] + (p1[1] * ox + p2[1] * oy) * squeeze, c[2] + (p1[2] * ox + p2[2] * oy) * squeeze];
+    const along = 1.0 + 1.8 * (1 - s) ** 2;                                // inflow along the filament toward the node
+    const q = [c[0] * along + p1[0] * ox + p2[0] * oy, c[1] * along + p1[1] * ox + p2[1] * oy, c[2] * along + p1[2] * ox + p2[2] * oy];
     const g = GRF(q[0], q[1], q[2]);
     aQ.set(q, i * 3);
     aPsi.set([fin[0] - q[0] + g[0] * 0.6, fin[1] - q[1] + g[1] * 0.6, fin[2] - q[2] + g[2] * 0.6], i * 3);
+    aSz[i] = knot ? 22 : (40 + 70 * s) * Math.sqrt(F.w);
   }
-  const geo = geom(N, { aQ: [aQ, 3], aPsi: [aPsi, 3], aSz: [aSz, 1] });
+  lattice.forEach((q, n) => {
+    const i = NF + n; const [P, J] = GRF.jac(q[0], q[1], q[2]);
+    aQ.set(q, i * 3); aPsi.set([P[0] * AMP, P[1] * AMP, P[2] * AMP], i * 3);
+    aJ0.set([J[0] * AMP, J[1] * AMP, J[2] * AMP], i * 3); aJ1.set([J[3] * AMP, J[4] * AMP, J[5] * AMP], i * 3); aJ2.set([J[6] * AMP, J[7] * AMP, J[8] * AMP], i * 3);
+    aSz[i] = -sp;                                                           // negative size marks a lattice particle
+  });
+  const geo = geom(N, { aQ: [aQ, 3], aPsi: [aPsi, 3], aSz: [aSz, 1], aJ0: [aJ0, 3], aJ1: [aJ1, 3], aJ2: [aJ2, 3] });
   const mat = pointsMaterial(/* glsl */`
-    attribute vec3 aQ; attribute vec3 aPsi; attribute float aSz;
-    uniform float uVis, uIntro; uniform vec3 uDMCol;
+    attribute vec3 aQ; attribute vec3 aPsi; attribute float aSz; attribute vec3 aJ0; attribute vec3 aJ1; attribute vec3 aJ2;
+    uniform float uVis, uIntro, uEdge;
     void main(){
       float D = uA;                                     // linear growth, D(a) = a in matter domination
       vec3 world = aQ + D*aPsi;
-      float b = mix(0.5*pow(aSz/30.0, -1.3), 0.05, uIntro);
-      emit(world, aSz*(1.0 + uIntro), uDMCol*b*uVis);
-    }`, { uVis: { value: 1 }, uIntro: { value: 0 }, uDMCol: { value: new THREE.Color(0.30, 0.40, 1.0) } });
+      if (aSz > 0.0){
+        float b = mix(0.16*pow(aSz/30.0, -1.3), 0.05, uIntro);
+        emit(world, aSz*(1.0 + uIntro), vec3(b*uVis));
+      } else {
+        // Zel'dovich density: rho / rho_bar = 1 / |det(I + D J)|, capped at the caustics
+        mat3 M = mat3(1.0) + D*mat3(aJ0, aJ1, aJ2);
+        float rho = clamp(1.0/max(abs(determinant(M)), 1e-3), 0.06, 40.0);
+        float edge = 1.0 - smoothstep(uEdge*0.62, uEdge, length(aQ));
+        emit(world, -aSz*1.05*pow(rho, -0.333), vec3(0.03*pow(rho, 0.8)*edge*uVis));
+      }
+    }`, { uVis: { value: 1 }, uIntro: { value: 0 }, uEdge: { value: 7600 } });
   return new THREE.Points(geo, mat);
 }
 
@@ -1101,7 +1123,7 @@ renderer.setClearColor(0x000000, 1);
 let DPR = Math.min(devicePixelRatio || 1, small ? 1.25 : 1.75), VOL_SCALE = small ? 0.4 : 0.5;
 const camera = new THREE.PerspectiveCamera(22, innerWidth / innerHeight, 0.05, 5e7);
 const rtOpts = { type: THREE.HalfFloatType, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false };
-let hdrRT, volRT, mips = [];
+let hdrRT, volRT, dmRT, mips = [];
 const quadGeo = new THREE.BufferGeometry();
 quadGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
 quadGeo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 2, 0, 0, 2]), 2));
@@ -1138,9 +1160,22 @@ const upMat = new THREE.ShaderMaterial({
   blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
 });
 const finalMat = new THREE.ShaderMaterial({
-  uniforms: { tScene: { value: null }, tBloom: { value: null }, uBloom: { value: 0.11 }, uExposure: { value: 1.0 }, uTimeS: { value: 0 }, uRes: { value: new THREE.Vector2() }, uDbg: { value: +(params.get('dbg') || 0) } },
+  uniforms: { tScene: { value: null }, tBloom: { value: null }, tDM: { value: null }, uDMGain: { value: 6 }, uBloom: { value: 0.11 }, uExposure: { value: 1.0 }, uTimeS: { value: 0 }, uRes: { value: new THREE.Vector2() }, uDbg: { value: +(params.get('dbg') || 0) } },
   vertexShader: FS_VERT,
-  fragmentShader: /* glsl */`uniform sampler2D tScene, tBloom; uniform float uBloom, uExposure, uTimeS, uDbg; uniform vec2 uRes; varying vec2 vUv;
+  fragmentShader: /* glsl */`uniform sampler2D tScene, tBloom, tDM; uniform float uBloom, uExposure, uTimeS, uDbg, uDMGain; uniform vec2 uRes; varying vec2 vUv;
+    // projected density -> indigo voids, magenta filaments, orange-to-cream nodes
+    vec3 cmap(float t){
+      const vec3 c0 = vec3(0.00, 0.00, 0.02), c1 = vec3(0.05, 0.04, 0.19), c2 = vec3(0.15, 0.10, 0.45), c3 = vec3(0.40, 0.17, 0.68),
+                 c4 = vec3(0.72, 0.28, 0.78), c5 = vec3(0.95, 0.47, 0.62), c6 = vec3(1.00, 0.72, 0.46), c7 = vec3(1.00, 0.96, 0.86);
+      t = clamp(t, 0.0, 1.0);
+      if (t < 0.12) return mix(c0, c1, t/0.12);
+      if (t < 0.28) return mix(c1, c2, (t-0.12)/0.16);
+      if (t < 0.45) return mix(c2, c3, (t-0.28)/0.17);
+      if (t < 0.60) return mix(c3, c4, (t-0.45)/0.15);
+      if (t < 0.74) return mix(c4, c5, (t-0.60)/0.14);
+      if (t < 0.87) return mix(c5, c6, (t-0.74)/0.13);
+      return mix(c6, c7, (t-0.87)/0.13);
+    }
     vec3 aces(vec3 x){ return clamp((x*(2.51*x + 0.03))/(x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); }
     float h12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y)*p3.z); }
     void main(){
@@ -1153,6 +1188,9 @@ const finalMat = new THREE.ShaderMaterial({
       vec2 q = vUv - 0.5; q.x *= uRes.x/uRes.y;
       c *= mix(1.0, smoothstep(1.15, 0.25, length(q)), 0.45);
       c = pow(c, vec3(1.0/2.2));
+      float dm = texture2D(tDM, vUv).r;
+      vec3 dmc = cmap(log2(1.0 + dm*uDMGain)/log2(1.0 + uDMGain*14.0));
+      c = 1.0 - (1.0 - c)*(1.0 - dmc);
       c += (h12(gl_FragCoord.xy + fract(uTimeS)*917.0) - 0.5)*(1.6/255.0);
       gl_FragColor = vec4(c, 1.0);
     }`, depthTest: false, depthWrite: false,
@@ -1162,8 +1200,9 @@ function resize() {
   W = innerWidth; H = innerHeight;
   renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
   const bw = Math.floor(W * DPR), bh = Math.floor(H * DPR);
-  hdrRT?.dispose(); volRT?.dispose(); mips.forEach(m => m.dispose());
+  hdrRT?.dispose(); volRT?.dispose(); dmRT?.dispose(); mips.forEach(m => m.dispose());
   hdrRT = new THREE.WebGLRenderTarget(bw, bh, rtOpts);
+  dmRT = new THREE.WebGLRenderTarget(Math.floor(bw * 0.75), Math.floor(bh * 0.75), rtOpts);
   volRT = new THREE.WebGLRenderTarget(Math.max(2, Math.floor(bw * VOL_SCALE)), Math.max(2, Math.floor(bh * VOL_SCALE)), rtOpts);
   mips = [];
   let mw = bw, mh = bh;
@@ -1184,11 +1223,13 @@ const bulge = buildSpheroid(Math.round(55000 * Q), bulgeSampler);
 const gcs = buildSpheroid(1900, gcSampler);                              // the real count, ~1900
 const halo = buildHalo(Math.round(90000 * Q));
 const subs = buildSubhaloParticles();
-const web = buildWeb(Math.round(46000 * Q));
+const web = buildWeb();
 const streamPts = buildStreamPoints();
 const sky = buildSky(small ? 1500 : 3000);
 gcs.material.uniforms.uVis.value = 1;
-[web, halo, subs, streamPts, gcs, bulge, disk].forEach(o => { o.frustumCulled = false; scene.add(o); });
+const dmScene = new THREE.Scene();
+[web, halo, subs].forEach(o => { o.frustumCulled = false; dmScene.add(o); });
+[streamPts, gcs, bulge, disk].forEach(o => { o.frustumCulled = false; scene.add(o); });
 sky.frustumCulled = false; bgScene.add(sky);
 const subP = new Float64Array(SUB.length * 3), subV = new Float64Array(SUB.length * 3);
 SUB.forEach((s, i) => { subP.set(s.pos, i * 3); subV.set(s.vel, i * 3); });
@@ -1199,12 +1240,12 @@ const actx = annot.getContext('2d');
    8. Camera: scroll stops, intro path, drag
    ===================================================================== */
 const STOPS = {
-  hero:    { d: 52,    el: 6,  az: 0,    film: 0 },
+  hero:    { d: 54,    el: 34, az: 0,    film: 0 },
   halo:    { d: 260,   el: 20, az: -28,  film: -0.15 },
   subhalo: { d: 1900,  el: 32, az: -70,  film: -0.15 },
   web:     { d: 15000, el: 46, az: -115, film: -0.13 },
   model:   { d: 74,    el: 56, az: -160, film: -0.2 },
-  cta:     { d: 58,    el: 6,  az: -360, film: 0 },
+  cta:     { d: 60,    el: 30, az: -360, film: 0 },
 };
 const sections = [...document.querySelectorAll('[data-stop]')];
 let stopAnchors = [];
@@ -1220,7 +1261,7 @@ function scrollTarget() {
   const sc = (k) => (k === 'hero' || k === 'cta') ? 0 : k === 'model' ? 0.4 : 1;
   return { d: Math.exp(mixA(Math.log(p.d), Math.log(q.d), t)), el: mixA(p.el, q.el, t), az: mixA(p.az, q.az, t), film: mixA(p.film, q.film, t), scrim: mixA(sc(A[i].k), sc(A[i + 1].k), t) };
 }
-const INTRO_KEYS = [[0, 26000, 38, 70], [0.3, 15000, 34, 55], [0.55, 5200, 26, 38], [0.78, 1150, 16, 20], [0.92, 170, 9, 6], [1, 52, 6, 0]];
+const INTRO_KEYS = [[0, 26000, 38, 70], [0.3, 15000, 34, 55], [0.55, 5200, 26, 38], [0.78, 1150, 16, 20], [0.92, 170, 30, 6], [1, 54, 34, 0]];
 function introCam(tau) {
   let i = 0; while (i < INTRO_KEYS.length - 2 && tau > INTRO_KEYS[i + 1][0]) i++;
   const a = INTRO_KEYS[i], b = INTRO_KEYS[i + 1]; const t = smooth(0, 1, (tau - a[0]) / (b[0] - a[0]));
@@ -1500,10 +1541,10 @@ function frame(now) {
   gcs.material.uniforms.uVis.value = layers.gc ? 0.09 : 0;
   const introW = introOn ? 1 - smooth(0.55, 0.95, tau) : 0;
   const dmZoom = smooth(50, 420, dPhys);
-  halo.material.uniforms.uVis.value = layers.dm || introOn ? mixA(0.08, 1.0, dmZoom) : 0;
+  halo.material.uniforms.uVis.value = layers.dm || introOn ? mixA(0.025, 1.0, dmZoom) : 0;
   halo.material.uniforms.uIntro.value = introW;
   subs.material.uniforms.uVis.value = (layers.sub ? smooth(90, 600, dPhys) * 0.5 : 0) * (introOn ? smooth(0.15, 0.4, tau) : 1);
-  web.material.uniforms.uVis.value = (layers.dm ? smooth(1400, 7000, dPhys) * 0.6 : 0) * (1 - introW) + introW;
+  web.material.uniforms.uVis.value = (layers.dm ? smooth(900, 6000, dPhys) : 0) * (1 - introW) + introW;
   web.material.uniforms.uIntro.value = introW;
   streamPts.material.uniforms.uVis.value = layers.stream ? smooth(40, 110, dPhys) * (1 - smooth(1800, 5000, dPhys)) : 0;
   volMat.uniforms.uGal.value = smooth(0.1, 0.7, tau);
@@ -1520,10 +1561,11 @@ function frame(now) {
   renderer.render(bgScene, camera);
   volCompMat.uniforms.tVol.value = volRT.texture; pass(volCompMat, hdrRT, false);
   renderer.setRenderTarget(hdrRT); if (!params.has('nopart')) renderer.render(scene, camera);
+  renderer.setRenderTarget(dmRT); renderer.clear(); renderer.render(dmScene, camera);
   let src = hdrRT;
   mips.forEach((m, i) => { downMat.uniforms.tSrc.value = src.texture; downMat.uniforms.uTexel.value.set(1 / src.width, 1 / src.height); downMat.uniforms.uFirst.value = i === 0 ? 1 : 0; pass(downMat, m); src = m; });
   for (let i = mips.length - 1; i > 0; i--) { upMat.uniforms.tSrc.value = mips[i].texture; upMat.uniforms.uTexel.value.set(1 / mips[i].width, 1 / mips[i].height); pass(upMat, mips[i - 1], false); }
-  finalMat.uniforms.tScene.value = hdrRT.texture; finalMat.uniforms.tBloom.value = mips[0].texture;
+  finalMat.uniforms.tScene.value = hdrRT.texture; finalMat.uniforms.tDM.value = dmRT.texture; finalMat.uniforms.tBloom.value = mips[0].texture;
   pass(finalMat, null);
 
   drawAnnotations(layers.ann && !introOn ? smooth(110, 260, dPhys) * (1 - smooth(5000, 9000, dPhys)) : 0, a);
