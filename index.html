@@ -109,7 +109,7 @@ h2 em { font-style: italic; }
 .hero-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 32px; flex-wrap: wrap; }
 .hero .lede { max-width: 30rem; display: flex; flex-direction: column; gap: 20px; }
 .hero .lede p { margin: 0; font-size: var(--step-1); line-height: 1.45; color: var(--ink); font-weight: 300; }
-.hero .plate-id { font-family: var(--font-mono); font-size: .75rem; letter-spacing: .1em; color: var(--ink-dim); text-transform: uppercase; display: flex; flex-direction: column; gap: 4px; text-align: right; }
+.hero .plate-id { font-family: var(--font-mono); font-size: .6875rem; letter-spacing: .1em; color: var(--ink-dim); text-transform: uppercase; display: flex; flex-direction: column; gap: 4px; }
 .actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .btn {
   font: 500 .875rem/1 var(--font-body); letter-spacing: .04em; text-decoration: none; cursor: pointer;
@@ -206,7 +206,6 @@ footer.colophon {
   .nav ul li:not(:last-child) { display: none; }
   .stop { padding-block: 14vh; justify-content: flex-end; }
   .hero { padding-block: 0 26vh; }
-  .hero .plate-id { text-align: left; }
   .scrim { background: linear-gradient(0deg, rgba(6,7,12,.9) 0%, rgba(6,7,12,.55) 45%, rgba(6,7,12,0) 75%); }
   .hud { left: var(--gutter); right: var(--gutter); width: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); padding: 10px 12px; }
   .facts li { grid-template-columns: 1fr; gap: 2px; }
@@ -253,11 +252,10 @@ footer.colophon {
           <a class="btn" href="#access">Request early access</a>
           <a class="btn ghost" href="#model">Read the model</a>
         </div>
-      </div>
-      <div class="plate-id" aria-label="Rendering details">
-        <span>NGC 4594 · M104 · Sa</span>
-        <span>d = 9.55 Mpc · seen from Earth at i = 84°</span>
-        <span>Live ΛCDM halo model</span>
+        <div class="plate-id" aria-label="Rendering details">
+          <span>NGC 4594 · M104 · Sa · d = 9.55 Mpc</span>
+          <span>Seen from Earth at i = 84° · live ΛCDM halo model</span>
+        </div>
       </div>
     </div>
   </section>
@@ -369,7 +367,7 @@ footer.colophon {
       <div class="chips" role="group" aria-label="Layers">
         <button type="button" id="L-stars" aria-pressed="true">Stars</button>
         <button type="button" id="L-dust" aria-pressed="true">Dust</button>
-        <button type="button" id="L-dm" class="dm" aria-pressed="true">Dark matter</button>
+        <button type="button" id="L-dm" class="dm" aria-pressed="false">Dark matter</button>
         <button type="button" id="L-sub" class="dm" aria-pressed="true">Subhalos</button>
         <button type="button" id="L-stream" aria-pressed="true">Stream</button>
         <button type="button" id="L-gc" aria-pressed="true">Globulars</button>
@@ -477,7 +475,7 @@ function accel(x, y, z, out) {                // full 3D force from all componen
 }
 
 // Spiral density wave: m = 2, pitch 12 deg, corotation at 10 kpc (Lin & Shu 1964)
-const ARM_M = 2, PITCH = 12 * Math.PI / 180, COTP = 1 / Math.tan(PITCH);
+const ARM_M = 2, PITCH = 15 * Math.PI / 180, COTP = 1 / Math.tan(PITCH);
 const R_CR = 10.0, OMEGA_P = Omega(R_CR);
 const DUST_R = 7.0;
 
@@ -657,7 +655,7 @@ vec2 shellR(float q, float r0, float tau, float a){
    4. Particle populations
    ===================================================================== */
 const U = {
-  uTime: { value: 0 }, uPxScale: { value: 1 }, uA: { value: 1 }, uDust: { value: 1 }, uExtK: { value: 6.5 },
+  uTime: { value: 0 }, uPxScale: { value: 1 }, uA: { value: 1 }, uDust: { value: 1 }, uExtK: { value: 4.55 },
   uCamGal: { value: new THREE.Vector3() }, uTau: { value: 1 },
 };
 function pointsMaterial(vertex, extra = {}) {
@@ -724,7 +722,7 @@ function buildDisk(N) {
         // time since this star's orbit last crossed the arm crest: young stars light up just downstream
         float rate = ARM_M*(Om - OMEGA_P);
         float since = mod(sign(rate)*armPhase(R, phi, t), 2.0*PI)/max(abs(rate), 1e-4);
-        lum *= exp(-since/(type > 1.5 ? 9.0 : 32.0));
+        lum *= exp(-since/(type > 1.5 ? 9.0 : 32.0))*3.0;
       }
       float born = smoothstep(aSt.y, aSt.y + 0.04, uTau);
       vec3 ext = extinction(p, hash13(vec3(aOrb.xy*17.0, aSt.y*31.0)));
@@ -953,14 +951,14 @@ function buildWeb() {
       float D = uA;                                     // linear growth, D(a) = a in matter domination
       vec3 world = aQ + D*aPsi;
       if (aSz > 0.0){
-        float b = mix(0.16*pow(aSz/30.0, -1.3), 0.05, uIntro);
+        float b = mix(0.26*pow(aSz/30.0, -1.3), 0.05, uIntro);
         emit(world, aSz*(1.0 + uIntro), vec3(b*uVis));
       } else {
         // Zel'dovich density: rho / rho_bar = 1 / |det(I + D J)|, capped at the caustics
         mat3 M = mat3(1.0) + D*mat3(aJ0, aJ1, aJ2);
         float rho = clamp(1.0/max(abs(determinant(M)), 1e-3), 0.06, 40.0);
         float edge = 1.0 - smoothstep(uEdge*0.62, uEdge, length(aQ));
-        emit(world, -aSz*1.05*pow(rho, -0.333), vec3(0.03*pow(rho, 0.8)*edge*uVis));
+        emit(world, -aSz*1.05*pow(rho, -0.333), vec3(0.055*pow(rho, 0.8)*edge*uVis));
       }
     }`, { uVis: { value: 1 }, uIntro: { value: 0 }, uEdge: { value: 7600 } });
   return new THREE.Points(geo, mat);
@@ -1059,7 +1057,7 @@ const volMat = new THREE.ShaderMaterial({
   uniforms: {
     uTime: U.uTime, uA: U.uA, uDust: U.uDust,
     uInvProj: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() },
-    uGal: { value: 1 }, uKappa: { value: 6.5 }, uBulgeCol: { value: new THREE.Vector3(...kelvin(4300)) },
+    uGal: { value: 1 }, uKappa: { value: 4.55 }, uBulgeCol: { value: new THREE.Vector3(...kelvin(4300)) },
     uDiskCol: { value: new THREE.Vector3(...kelvin(5600)) }, uEmit: { value: 0.11 }, uStars: { value: 1 },
   },
   vertexShader: FS_VERT,
@@ -1075,8 +1073,9 @@ const volMat = new THREE.ShaderMaterial({
       float sc = 1.0/cosh(clamp(p.y/0.30, -20.0, 20.0)); float dz = sc*sc;
       float phi = atan(p.z, p.x);
       float sp = 0.5 + 0.5*cos(armPhase(R, phi, t) - 0.3);
-      float disk = (exp(-R/3.6)*(1.0 + 1.1*sp*smoothstep(3.0, 6.0, R)) + 0.9*exp(-0.5*sq((R - 9.3)/1.0))*(0.6 + 0.8*sp))*dz;
-      return uBulgeCol*(bul*3.0 + shalo*2.0) + uDiskCol*disk*0.32;
+      float arm = sp*sp;
+      float disk = (exp(-R/3.6)*(0.55 + 2.4*arm*smoothstep(2.5, 5.5, R)) + 0.9*exp(-0.5*sq((R - 9.3)/1.0))*(0.5 + 1.2*arm))*dz;
+      return uBulgeCol*(bul*3.0 + shalo*2.0) + uDiskCol*disk*1.15;
     }
     void main(){
       vec2 ndc = vUv*2.0 - 1.0;
@@ -1190,6 +1189,7 @@ const finalMat = new THREE.ShaderMaterial({
       c = pow(c, vec3(1.0/2.2));
       float dm = texture2D(tDM, vUv).r;
       vec3 dmc = cmap(log2(1.0 + dm*uDMGain)/log2(1.0 + uDMGain*14.0));
+      dmc *= 0.85*(1.0 - 0.8*clamp(dot(c, vec3(0.3, 0.55, 0.15)), 0.0, 1.0));   // starlight stays on top
       c = 1.0 - (1.0 - c)*(1.0 - dmc);
       c += (h12(gl_FragCoord.xy + fract(uTimeS)*917.0) - 0.5)*(1.6/255.0);
       gl_FragColor = vec4(c, 1.0);
@@ -1289,7 +1289,7 @@ const intro = { s: 1, playing: false, speed: 1 / 13 };
 const skipBtn = document.getElementById('skip');
 function startIntro() { Object.assign(cam, { d: 26000, el: 38, az: 70 }); intro.s = 0; intro.playing = true; intro.speed = 1 / 13; skipBtn.hidden = false; }
 if (forcedTau !== null) { intro.s = (Math.pow(forcedTau, 2 / 3) - A0) / (1 - A0); }
-else if (!reduceMotion && scrollY < 40 && !params.has('skip')) startIntro();
+else if (params.has('intro') && !reduceMotion) startIntro();
 skipBtn.addEventListener('click', () => { intro.speed = 1 / 1.2; });
 addEventListener('wheel', () => { if (intro.playing) intro.speed = Math.max(intro.speed, 1 / 1.5); }, { passive: true });
 addEventListener('touchmove', () => { if (intro.playing) intro.speed = Math.max(intro.speed, 1 / 1.5); }, { passive: true });
@@ -1299,7 +1299,7 @@ const PHASES = [[0.06, 'Linear growth · Zel’dovich displacements'], [0.2, 'Sh
 /* =====================================================================
    10. Controls, HUD, form
    ===================================================================== */
-const layers = { stars: true, dust: true, dm: true, sub: true, stream: true, gc: true, ann: true };
+const layers = { stars: true, dust: true, dm: false, sub: true, stream: true, gc: true, ann: true };
 const layerIds = { stars: 'L-stars', dust: 'L-dust', dm: 'L-dm', sub: 'L-sub', stream: 'L-stream', gc: 'L-gc', ann: 'L-ann' };
 (params.get('off') || '').split(',').filter(Boolean).forEach(k => { if (k in layers) layers[k] = false; });
 for (const [k, id] of Object.entries(layerIds)) {
@@ -1456,7 +1456,7 @@ function paramTable() {
     ['Disk', 'Miyamoto–Nagai potential, epicyclic orbits (κ, ν from Φ), age–velocity relation σ ∝ τ<sup>0.35</sup>', `M = ${e(MD)} M☉ · a = ${AD} kpc · b = ${BD} kpc`, 'Miyamoto &amp; Nagai 1975'],
     ['Black hole', 'Softened point mass', `M• = ${e(MBH, 0)} M☉`, 'Kormendy et al. 1996'],
     ['Rotation', 'Ω(R) = v<sub>c</sub>/R from the summed potential', `v<sub>c,max</sub> ≈ ${Math.round(vmax)} km/s · V₂₀₀ = ${Math.round(Math.sqrt(GM200 / R200) / KMS)} km/s`, '—'],
-    ['Spiral arms', 'm = 2 trailing density wave; OB stars and H II regions lit when orbits cross the crest', `pitch 12° · corotation ${R_CR} kpc · Ω<sub>p</sub> = ${(OMEGA_P / KMS).toFixed(1)} km/s/kpc`, 'Lin &amp; Shu 1964'],
+    ['Spiral arms', 'm = 2 trailing density wave; OB stars and H II regions lit when orbits cross the crest', `pitch 15° · corotation ${R_CR} kpc · Ω<sub>p</sub> = ${(OMEGA_P / KMS).toFixed(1)} km/s/kpc`, 'Lin &amp; Shu 1964'],
     ['Globular clusters', 'Bimodal: metal-poor (blue, extended) and metal-rich (red, concentrated)', '≈ 1900 clusters', 'Rhode &amp; Zepf 2004'],
     ['Stellar stream', 'Particle spray from a disrupting satellite, integrated in Φ', `${STREAM.N} particles, released over 3.2 Gyr`, 'Fardal, Huang &amp; Weinberg 2015; Martínez-Delgado et al. 2021'],
     ['Initial conditions', 'Zel’dovich displacements from a Gaussian random field, BBKS transfer function', `Ω<sub>m</sub> = ${OMEGA_M} · h = ${h} · n<sub>s</sub> = ${N_S}`, 'Zel’dovich 1970; Bardeen et al. 1986'],
@@ -1483,7 +1483,7 @@ function integrate(P, V, n, tCur, tTarget, maxSteps) {
   return tCur;
 }
 function frame(now) {
-  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const dt = clamp((now - last) / 1000, 0, 0.1); last = now;
   ema = ema * 0.95 + dt * 1000 * 0.05;
   perfT += dt;
   if (!perfChecked && perfT > 4) {
@@ -1536,15 +1536,15 @@ function frame(now) {
   const dustOn = layers.dust ? smooth(0.6, 0.95, tau) : 0;
   U.uDust.value = dustOn;
   const starsOn = layers.stars ? 1 : 0;
-  disk.material.uniforms.uStars.value = starsOn * 0.07;
+  disk.material.uniforms.uStars.value = starsOn * 0.1;
   bulge.material.uniforms.uVis.value = starsOn * 0.07;
   gcs.material.uniforms.uVis.value = layers.gc ? 0.09 : 0;
   const introW = introOn ? 1 - smooth(0.55, 0.95, tau) : 0;
   const dmZoom = smooth(50, 420, dPhys);
-  halo.material.uniforms.uVis.value = layers.dm || introOn ? mixA(0.025, 1.0, dmZoom) : 0;
+  halo.material.uniforms.uVis.value = introOn ? mixA(0.025, 1.0, dmZoom) : layers.dm ? mixA(0.025, 1.0, dmZoom) : smooth(110, 420, dPhys);
   halo.material.uniforms.uIntro.value = introW;
   subs.material.uniforms.uVis.value = (layers.sub ? smooth(90, 600, dPhys) * 0.5 : 0) * (introOn ? smooth(0.15, 0.4, tau) : 1);
-  web.material.uniforms.uVis.value = (layers.dm ? smooth(900, 6000, dPhys) : 0) * (1 - introW) + introW;
+  web.material.uniforms.uVis.value = smooth(900, 6000, dPhys) * (1 - introW) + introW;
   web.material.uniforms.uIntro.value = introW;
   streamPts.material.uniforms.uVis.value = layers.stream ? smooth(40, 110, dPhys) * (1 - smooth(1800, 5000, dPhys)) : 0;
   volMat.uniforms.uGal.value = smooth(0.1, 0.7, tau);
