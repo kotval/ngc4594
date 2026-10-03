@@ -6,11 +6,11 @@ A live, in-browser model of the [Sombrero Galaxy](https://en.wikipedia.org/wiki/
 
 ![The Sombrero Galaxy, rendered edge-on at i = 84°](docs/sombrero.png)
 
-It's art, not a research code. The colours, brightness and dust texture are tuned by eye against the Hubble plate. But the structure underneath is real physics, with real parameters and citations, and the motion you see is the motion the potential requires.
+This is an artistic interpretation rather than research code. The colours, brightness and dust texture are tuned by eye against the Hubble plate, even down to the cross shaped diffraction spikes due to Hubble's support struts; however, the structure underneath is real physics, with parameters pulled from relevant papers, and the motion you see is the motion the potential requires.
 
 ## The physics, briefly
 
-**The galaxy.** The Sombrero is a [spiral galaxy](https://en.wikipedia.org/wiki/Spiral_galaxy) 9.55 Mpc away, seen almost edge-on. Its gravity is modelled as three summed components: a Hernquist bulge, a Miyamoto–Nagai disk and a central black hole. Stars move on epicyclic orbits whose frequencies come from that potential, so the inner disk laps the outer disk exactly as the [rotation curve](https://en.wikipedia.org/wiki/Galaxy_rotation_curve) dictates. A two-armed [density wave](https://en.wikipedia.org/wiki/Density_wave_theory) turns rigidly at its pattern speed while stars stream through it.
+**The galaxy.** The Sombrero is a galaxy of unknown classification. Since I let the viewer pan, I had to make a decision, and I chose to represent it as a [spiral galaxy](https://en.wikipedia.org/wiki/Spiral_galaxy). The real object is 9.55 Mpc away, seen almost edge-on. Its gravity is modelled as three summed components: a Hernquist bulge, a Miyamoto–Nagai disk and a central black hole. Stars move on epicyclic orbits whose frequencies come from that potential, so the inner disk laps the outer disk exactly as the [rotation curve](https://en.wikipedia.org/wiki/Galaxy_rotation_curve) dictates. A two-armed [density wave](https://en.wikipedia.org/wiki/Density_wave_theory) turns rigidly at its pattern speed while stars stream through it.
 
 **The dust lane.** The famous brim is a ring of [cosmic dust](https://en.wikipedia.org/wiki/Cosmic_dust) about 9.4 kpc out. A raymarcher integrates emission and absorption through it, with per-channel [extinction](https://en.wikipedia.org/wiki/Interstellar_extinction) that reddens the starlight behind it, plus scattering that keeps the lane brown instead of black. The texture is sheared by differential rotation, using two staggered flow maps so it never winds up.
 
@@ -26,13 +26,11 @@ The full parameter table, both charts and the references are in the appendix at 
 
 ## Compared with GPT-6 Astra
 
-When OpenAI launched GPT-6 Astra, the announcement page led with a three.js galaxy.
+When OpenAI launched GPT-6 Astra, the announcement page led with a three.js galaxy. It's a spiral of glowing dots bent into the shape of a 6. Pretty, in the way a screensaver is pretty. It has no dust lane, halo, nor inclination; nothing on screen that suggests any of those dots know how fast to go. For a model launched on the strength of its 3D work, it's a remarkably flat idea of what a galaxy is.
 
 ![The GPT-6 Astra launch page hero](docs/gpt-6-astra.png)
 
-It's a spiral of glowing dots bent into the shape of a 6. Pretty, in the way a screensaver is pretty. It also has no dust lane, no halo, no inclination, and nothing on screen that suggests any of those dots know how fast to go. For a model launched on the strength of its 3D work, it's a remarkably flat idea of what a galaxy is.
-
-This repo is what you get when the galaxy is the point instead of the decoration: a real system, viewed at a real inclination, with a real halo holding it together, and the universe around it out to 150 Mpc.
+It was underwhelming. So I told Claude to look up some papers and start working on this with me. I think this is much better, and I finally found a practical use for my physics education, yay!
 
 ![Neighbour galaxies around the splashback radius](docs/halo.png)
 
