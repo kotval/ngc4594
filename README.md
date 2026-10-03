@@ -14,9 +14,11 @@ This is an artistic interpretation rather than research code. The colours, brigh
 
 **The dust lane.** The famous brim is a ring of [cosmic dust](https://en.wikipedia.org/wiki/Cosmic_dust) about 9.4 kpc out. A raymarcher integrates emission and absorption through it, with per-channel [extinction](https://en.wikipedia.org/wiki/Interstellar_extinction) that reddens the starlight behind it, plus scattering that keeps the lane brown instead of black. The texture is sheared by differential rotation, using two staggered flow maps so it never winds up.
 
-**The halo.** Around 85% of the mass is dark. It's an [NFW profile](https://en.wikipedia.org/wiki/Navarro%E2%80%93Frenk%E2%80%93White_profile) [dark matter halo](https://en.wikipedia.org/wiki/Dark_matter_halo) of 5 × 10¹² M☉ with a triaxial shape and a concentration taken from the cosmological concentration–mass relation. It is populated with 300 subhalos drawn from a dN/dm ∝ m⁻¹·⁹ mass function on live leapfrog orbits, a splashback radius, about 1,900 bimodal [globular clusters](https://en.wikipedia.org/wiki/Globular_cluster), a [stellar stream](https://en.wikipedia.org/wiki/Stellar_stream) from a disrupting satellite, and a handful of neighbour galaxies.
+**The halo.** Around 85% of the mass is dark. It's an [NFW profile](https://en.wikipedia.org/wiki/Navarro%E2%80%93Frenk%E2%80%93White_profile) [dark matter halo](https://en.wikipedia.org/wiki/Dark_matter_halo) of 5 × 10¹² M☉ with a triaxial shape and a concentration taken from the cosmological concentration–mass relation. It is populated with 300 subhalos drawn from a dN/dm ∝ m⁻¹·⁹ mass function on live leapfrog orbits, a splashback radius, about 1,900 bimodal [globular clusters](https://en.wikipedia.org/wiki/Globular_cluster), a [stellar stream](https://en.wikipedia.org/wiki/Stellar_stream) from a disrupting satellite, and a handful of neighbour galaxies. Only the heaviest subhalos host a visible dwarf, because stellar mass falls steeply with halo mass at the low end, so about 35 of the 300 are lit.
 
-**The cosmic web.** At the largest scales, matter is displaced from a Gaussian random field with a [ΛCDM](https://en.wikipedia.org/wiki/Lambda-CDM_model) power spectrum. Particles collapse into sheets, the [Zel'dovich pancakes](https://en.wikipedia.org/wiki/Zeldovich_pancake), and then into [filaments](https://en.wikipedia.org/wiki/Galaxy_filament) that feed the nodes. Two nested lattices reach out to 76 Mpc, and the flow keeps running after z = 0 at an exaggerated rate so you can watch it move. The look is modelled on the [Millennium Run](https://en.wikipedia.org/wiki/Millennium_Run). Hit "Replay formation" to watch the whole thing assemble from z = 13.
+**The cosmic web.** At the largest scales, matter is displaced from a Gaussian random field with a [ΛCDM](https://en.wikipedia.org/wiki/Lambda-CDM_model) power spectrum. Particles collapse into sheets, the [Zel'dovich pancakes](https://en.wikipedia.org/wiki/Zeldovich_pancake), and then into [filaments](https://en.wikipedia.org/wiki/Galaxy_filament) that feed the nodes. Two nested lattices reach out to 76 Mpc, and the flow keeps running after z = 0 at an exaggerated rate so you can watch it move. The look is modelled on the [Millennium Run](https://en.wikipedia.org/wiki/Millennium_Run). The formation sequence from z = 13 plays when the page opens, and doubles as the loading screen.
+
+**The galaxies around it.** About 1,750 field galaxies fill the local web. The count comes from a [Schechter luminosity function](https://en.wikipedia.org/wiki/Luminosity_function_(astronomy)) down to faint dwarfs, at the overdensity of the Virgo Southern Extension where the Sombrero lives. They're placed on the web with a bias toward dense regions, with red spheroids in the knots and blue disks in the field. Their displayed brightness is compressed so the dwarfs stay visible, which is the one place the look wins over the numbers.
 
 ![The cosmic web at 150 Mpc](docs/cosmic-web.png)
 
@@ -52,7 +54,7 @@ Add these after `#` in the URL, joined with `&`.
 |---|---|
 | `stop=hero\|halo\|subhalo\|web\|lss\|model\|cta` | Jump the camera to a scroll stop. |
 | `d=…&el=…` | Override the camera distance in kpc and its elevation in degrees, with `stop`. |
-| `intro` | Play the formation sequence from z = 13 on load. |
+| `nointro` | Skip the formation sequence and open straight on the galaxy. |
 | `off=dust,stars,…` | Start with layers switched off. |
 | `debug` | Log shader diagnostics into the page's `data-log` attribute. |
 

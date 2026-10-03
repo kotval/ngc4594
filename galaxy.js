@@ -556,6 +556,14 @@ function buildNeighbors() {
       ? { idx, kind: 'disk', Rd: 0.8 + 1.8 * s, h: 0.12 + 0.12 * s, n: Math.round((700 + 2500 * s) * Q), T: 5200 + 900 * (j % 3), lum: 0.9 }
       : { idx, kind: 'sph', a: 0.5 + 0.7 * s, q: 0.65 + 0.2 * rnd(), n: Math.round((600 + 1600 * s) * Q), T: 4500 + 300 * (j % 2), lum: 1.0 };
   });
+  // Satellites: below ~1e11 Msun stellar mass falls steeply with halo mass (M* ~ Mh^2), so only the heaviest subhalos
+  // hold a visible dwarf; the rest stay dark (the "missing satellites"). Light the ones above 3e9 Msun as dwarf spheroidals.
+  for (let i = 0; i < SUB.length - SUB.neigh.length; i++) {
+    const m = SUB[i].m; if (m < 3e9) continue;
+    const s = Math.pow(m / 1e10, 0.5);
+    specs.push({ idx: i, kind: 'sph', a: 0.25 + 0.35 * Math.pow(m / 1e10, 0.3), q: 0.6 + 0.35 * rnd(), n: Math.round(clamp(50 + 160 * s, 40, 600) * Q), T: 4500 + 500 * rnd(), lum: 0.55 });
+  }
+  SUB.lit = specs.length - SUB.neigh.length;
   const total = specs.reduce((s, x) => s + x.n, 0);
   const aSub = new Float32Array(total), aOff = new Float32Array(total * 3), col = new Float32Array(total * 3), aSz = new Float32Array(total);
   let k = 0;
@@ -668,10 +676,101 @@ function buildWeb() {
   return new THREE.Points(geo, mat);
 }
 
+/* ---- 4e1. Field galaxies: a Schechter luminosity function, placed by the web's density ---------------------
+   Count: n = phi* Gamma(alpha + 1, L_min/L*) with phi* = 0.0047 Mpc^-3 (Blanton et al. 2003, h = 0.68), a dwarf-rich faint
+   end alpha = -1.3 down to 3e-4 L* (M ~ -12.5), inside the 7.6 Mpc web at 1 + delta = 6 (the Virgo Southern Extension).
+   Positions are web particles drawn with weight rho^1.5 (galaxies are biased tracers), so they sit in sheets, filaments
+   and knots and ride the same flow. Morphology follows density: red spheroids in the knots, blue disks in the field. */
+const SCH = { phi: 0.0047, alpha: -1.3, lmin: 3e-4, delta: 5, R: 7.6 };
+function schechterN() {
+  let s = 0; const lo = Math.log(SCH.lmin), hi = Math.log(40), n = 4000, h = (hi - lo) / n;
+  for (let i = 0; i <= n; i++) { const x = Math.exp(lo + i * h); s += Math.pow(x, SCH.alpha + 1) * Math.exp(-x) * (i === 0 || i === n ? 0.5 : 1); }
+  return SCH.phi * s * h * (4 / 3) * Math.PI * SCH.R ** 3 * (1 + SCH.delta);
+}
+function sampleL() {                            // L / L* from the Schechter function: power law proposal, exp(-x) acceptance
+  const a = SCH.alpha + 1, lo = Math.pow(SCH.lmin, a), hi = Math.pow(30, a);
+  for (;;) { const x = Math.pow(lo + rnd() * (hi - lo), 1 / a); if (rnd() < Math.exp(-x)) return x; }
+}
+function buildFieldGalaxies(webPts) {
+  const A = webPts.geometry.attributes, Qa = A.aQ.array, Pa = A.aPsi.array, Sa = A.aSz.array, Ca = A.aColl.array;
+  const J0 = A.aJ0.array, J1 = A.aJ1.array, J2 = A.aJ2.array, n = Sa.length;
+  const w = new Float64Array(n), rhoA = new Float32Array(n);
+  let tot = 0;
+  for (let i = 0; i < n; i++) {
+    let rho, x, y, z;
+    if (Sa[i] > 0) { rho = 5; x = Qa[i * 3] + Pa[i * 3]; y = Qa[i * 3 + 1] + Pa[i * 3 + 1]; z = Qa[i * 3 + 2] + Pa[i * 3 + 2]; }
+    else {
+      const D = Math.min(1, Ca[i * 4 + 3] * 0.9), k = i * 3;
+      const m = [1 + D * J0[k], D * J0[k + 1], D * J0[k + 2], D * J1[k], 1 + D * J1[k + 1], D * J1[k + 2], D * J2[k], D * J2[k + 1], 1 + D * J2[k + 2]];
+      const det = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+      rho = clamp(1 / Math.max(Math.abs(det), 1e-3), 0.06, 12);
+      x = Qa[k] + D * Pa[k]; y = Qa[k + 1] + D * Pa[k + 1]; z = Qa[k + 2] + D * Pa[k + 2];
+    }
+    const r = Math.hypot(x, y, z);
+    rhoA[i] = rho;
+    w[i] = r < 500 || r > 7400 ? 0 : Math.pow(rho, 1.5);                 // not inside the Sombrero's own halo: its satellites are subhalos
+    tot += w[i]; w[i] = tot;
+  }
+  const N = Math.round(schechterN() * Math.max(Q, 0.6));
+  const aQ = new Float32Array(N * 3), aPsi = new Float32Array(N * 3), aColl = new Float32Array(N * 4), aKind = new Float32Array(N), aShp = new Float32Array(N * 4), col = new Float32Array(N * 3), aSz = new Float32Array(N);
+  for (let g = 0; g < N; g++) {
+    const t = rnd() * tot; let lo = 0, hi = n - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; w[mid] < t ? lo = mid + 1 : hi = mid; }
+    const i = lo, jit = unit(), js = 25 + 40 * rnd();
+    aQ.set([Qa[i * 3] + jit[0] * js, Qa[i * 3 + 1] + jit[1] * js, Qa[i * 3 + 2] + jit[2] * js], g * 3);
+    aPsi.set([Pa[i * 3], Pa[i * 3 + 1], Pa[i * 3 + 2]], g * 3);
+    aColl.set([Ca[i * 4], Ca[i * 4 + 1], Ca[i * 4 + 2], Ca[i * 4 + 3]], g * 4);
+    aKind[g] = Sa[i] > 0 ? 1 : -1;
+    const L = sampleL(), early = rnd() < clamp(0.12 + 0.16 * Math.log2(1 + rhoA[i]), 0.1, 0.8);
+    const Re = early ? 2.6 * Math.pow(L, 0.55) : 4.0 * Math.pow(L, 0.35);   // size-luminosity relations, kpc
+    const ang = TAU * rnd();
+    aShp.set([early ? 0.6 + 0.4 * rnd() : 0.2 + 0.7 * rnd(), Math.cos(ang), Math.sin(ang), early ? 1 : 0], g * 4);
+    const c = kelvin(early ? 4200 + 500 * rnd() : 5300 + 2200 * rnd());
+    // Displayed total flux ~ L^0.5 (compressed from L so dwarfs stay visible; the ordering is kept), spread over the true size:
+    // compact dwarfs become small bright knots, giants broad glows. Surface brightness is capped for close, resolved ones.
+    const sz = Math.max(0.6, 4 * Re), sb = Math.min(256 * Math.sqrt(L) / (sz * sz), 1.5);
+    col.set([c[0] * sb, c[1] * sb, c[2] * sb], g * 3); aSz[g] = sz;
+  }
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { ...U, uVis: { value: 1 }, uLum: { value: 50 }, uD: webPts.material.uniforms.uD, uWebT: webPts.material.uniforms.uWebT },
+    vertexShader: GLSL_COMMON + GLSL_POINT + /* glsl */`
+      attribute vec3 aQ; attribute vec3 aPsi; attribute vec4 aColl; attribute float aKind; attribute vec4 aShp; attribute vec3 color; attribute float aSz;
+      uniform float uVis, uLum, uD, uWebT, uTau; varying vec4 vShp;
+      void main(){
+        float D = uD; vec3 world;
+        if (aKind > 0.0) world = (aQ + min(D, 1.0)*aPsi)*exp(-max(D - 1.0, 0.0)*0.22);      // same flow as the web's filaments
+        else {                                                                               // and as its sticky sheets
+          float Dc = min(D, aColl.w*0.9); world = aQ + Dc*aPsi;
+          float past = max(D - aColl.w*0.9, 0.0), hsh = hash13(aQ*0.001);
+          world += aColl.xyz*smoothstep(0.0, 0.03, past)*90.0*sin(uWebT*(0.35 + 0.5*hsh) + 7.0*hsh)*exp(-past*0.3);
+        }
+        float born = smoothstep(0.55, 0.85, uTau);
+        vShp = aShp;
+        emit(world, aSz, color*uLum*born*uVis);
+      }`,
+    fragmentShader: /* glsl */`varying vec3 vCol; varying vec4 vShp;
+      void main(){
+        vec2 c = gl_PointCoord*2.0 - 1.0;
+        c = vec2(vShp.y*c.x - vShp.z*c.y, vShp.z*c.x + vShp.y*c.y); c.y /= vShp.x;
+        float r2 = dot(c, c); if (r2 > 1.0) discard;
+        float prof = vShp.w > 0.5 ? exp(-sqrt(r2)*7.0)*2.2 : exp(-r2*5.0) + 0.6*exp(-r2*40.0);   // de Vaucouleurs-ish cusp vs exponential disk + bulge
+        gl_FragColor = vec4(vCol*prof*(1.0 - r2*r2), 1.0);
+      }`,
+    transparent: true, depthTest: false, depthWrite: false,
+    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+  });
+  const pts = new THREE.Points(geom(N, { aQ: [aQ, 3], aPsi: [aPsi, 3], aColl: [aColl, 4], aKind: [aKind, 1], aShp: [aShp, 4], color: [col, 3], aSz: [aSz, 1] }), mat);
+  pts.count = N;
+  return pts;
+}
+
 /* ---- 4e2. Large-scale structure: a node graph of filaments draining into knots, over a faint Zel'dovich lattice ten times larger ---- */
 const LSS_BOX = 76000;
-function buildLSS() {
+function* buildLSS() {                         // a generator: built in time slices so it never stalls a frame
   const box = LSS_BOX;
+  const rnd = mulberry32(76000);                 // its own stream, so deferring it never reshuffles the rest of the scene
+  const gauss = () => { let u = 0; while (u === 0) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * rnd()); };
+  const unit = () => { const z = 2 * rnd() - 1, p = TAU * rnd(), s = Math.sqrt(1 - z * z); return [s * Math.cos(p), z, s * Math.sin(p)]; };
   // --- lattice: same adhesion rule as the inner web, resolving 7 Mpc waves with a 64^3 grid
   let jr = 0; for (let i = 0; i < 300; i++) { const [, J] = GRF2.jac((rnd() - .5) * 140000, (rnd() - .5) * 140000, (rnd() - .5) * 140000); jr += J[0] ** 2 + J[4] ** 2 + J[8] ** 2; }
   const AMP = 0.8 / Math.sqrt(jr / 900);                                   // still condensing at a = 1
@@ -684,7 +783,8 @@ function buildLSS() {
   }
   const N = pts.length;
   const aQ = new Float32Array(N * 3), aPsi = new Float32Array(N * 3), aJ0 = new Float32Array(N * 3), aJ1 = new Float32Array(N * 3), aJ2 = new Float32Array(N * 3), aColl = new Float32Array(N * 4);
-  pts.forEach((q, i) => {
+  for (let i = 0; i < N; i++) {
+    const q = pts[i];
     const [P, J] = GRF2.jac(q[0], q[1], q[2]);
     aQ.set(q, i * 3); aPsi.set([P[0] * AMP, P[1] * AMP, P[2] * AMP], i * 3);
     aJ0.set([J[0] * AMP, J[1] * AMP, J[2] * AMP], i * 3); aJ1.set([J[3] * AMP, J[4] * AMP, J[5] * AMP], i * 3); aJ2.set([J[6] * AMP, J[7] * AMP, J[8] * AMP], i * 3);
@@ -693,7 +793,8 @@ function buildLSS() {
     let e = [vec[0][k], vec[1][k], vec[2][k]];
     if (e[0] * P[0] + e[1] * P[1] + e[2] * P[2] < 0) e = [-e[0], -e[1], -e[2]];
     aColl.set([e[0], e[1], e[2], lam[k] < -1e-9 ? -1 / lam[k] : 1e6], i * 4);
-  });
+    if ((i & 1023) === 1023) yield;
+  }
   const lat = new THREE.Points(geom(N, { aQ: [aQ, 3], aPsi: [aPsi, 3], aJ0: [aJ0, 3], aJ1: [aJ1, 3], aJ2: [aJ2, 3], aColl: [aColl, 4] }), pointsMaterial(/* glsl */`
     attribute vec3 aQ; attribute vec3 aPsi; attribute vec3 aJ0; attribute vec3 aJ1; attribute vec3 aJ2; attribute vec4 aColl;
     uniform float uVis, uEdge, uD, uWebT, uSp;
@@ -881,7 +982,8 @@ function buildSky(N) {
     // 60% of the field is packed into the hero's cone of view so the plate is as busy as Hubble's
     const d = rnd() < 0.45 ? dirNear(HERO_FWD, Math.cos(24 * Math.PI / 180)) : unit();
     dir.set(d, i * 3);
-    const gal = rnd() < 0.38;
+    const inCone = d[0] * HERO_FWD[0] + d[1] * HERO_FWD[1] + d[2] * HERO_FWD[2] > Math.cos(24 * Math.PI / 180);
+    const gal = rnd() < (inCone ? 0.38 : 0.62);   // distant (z ~ 0.3-1) galaxies dominate faint counts away from the Milky Way's stars
     if (gal) {                                   // background galaxies: elliptical smudges, red ellipticals and bluer disks
       const early = rnd() < 0.5;
       const c = kelvin(early ? 3900 + 600 * rnd() : 5200 + 2200 * rnd());
@@ -1093,9 +1195,9 @@ function spikePasses() {                        // source in spk[0]; horizontal 
 const spkDirH = new THREE.Vector2(1, 0), spkDirV = new THREE.Vector2(0, 1);
 
 const finalMat = new THREE.ShaderMaterial({
-  uniforms: { tScene: { value: null }, tBloom: { value: null }, tDM: { value: null }, tSpkH: { value: null }, tSpkV: { value: null }, uSpike: { value: 0.12 }, uStretch: { value: 5.5 }, uDMGain: { value: 6 }, uBloom: { value: 0.11 }, uExposure: { value: 1.0 }, uTimeS: { value: 0 }, uRes: { value: new THREE.Vector2() }, uDbg: { value: +(params.get('dbg') || 0) } },
+  uniforms: { tScene: { value: null }, tBloom: { value: null }, tDM: { value: null }, tSpkH: { value: null }, tSpkV: { value: null }, uSpike: { value: 0.12 }, uStretch: { value: 5.5 }, uDMGain: { value: 6 }, uBloom: { value: 0.11 }, uExposure: { value: 1.0 }, uFade: { value: 0 }, uTimeS: { value: 0 }, uRes: { value: new THREE.Vector2() }, uDbg: { value: +(params.get('dbg') || 0) } },
   vertexShader: FS_VERT,
-  fragmentShader: /* glsl */`uniform sampler2D tScene, tBloom, tDM, tSpkH, tSpkV; uniform float uBloom, uExposure, uTimeS, uDbg, uDMGain, uSpike, uStretch; uniform vec2 uRes; varying vec2 vUv;
+  fragmentShader: /* glsl */`uniform sampler2D tScene, tBloom, tDM, tSpkH, tSpkV; uniform float uBloom, uExposure, uFade, uTimeS, uDbg, uDMGain, uSpike, uStretch; uniform vec2 uRes; varying vec2 vUv;
     // projected density -> indigo voids, magenta filaments, orange-to-cream nodes
     vec3 cmap(float t){
       const vec3 c0 = vec3(0.00, 0.00, 0.02), c1 = vec3(0.05, 0.04, 0.19), c2 = vec3(0.15, 0.10, 0.45), c3 = vec3(0.40, 0.17, 0.68),
@@ -1132,7 +1234,7 @@ const finalMat = new THREE.ShaderMaterial({
       dmc *= 0.85*(1.0 - 0.8*clamp(dot(c, vec3(0.3, 0.55, 0.15)), 0.0, 1.0));   // starlight stays on top
       c = 1.0 - (1.0 - c)*(1.0 - dmc);
       c += (h12(gl_FragCoord.xy + fract(uTimeS)*917.0) - 0.5)*(1.6/255.0);
-      gl_FragColor = vec4(c, 1.0);
+      gl_FragColor = vec4(c*uFade, 1.0);
     }`, depthTest: false, depthWrite: false,
 });
 let W = 1, H = 1;
@@ -1166,13 +1268,23 @@ const halo = buildHalo(Math.round(90000 * Q));
 const subs = buildSubhaloParticles();
 const neighbors = buildNeighbors();
 const web = buildWeb();
-const { lat: lssL, fil: lssF } = buildLSS();
+const field = buildFieldGalaxies(web);
+let lssL = null, lssF = null;                                            // large-scale structure, built in the background (see pumpLSS)
+const lssGen = buildLSS();
+function pumpLSS(budgetMs) {
+  if (lssL) return;
+  const t0 = performance.now();
+  while (performance.now() - t0 < budgetMs) {
+    const r = lssGen.next();
+    if (r.done) { ({ lat: lssL, fil: lssF } = r.value); [lssL, lssF].forEach(o => { o.frustumCulled = false; dmScene.add(o); }); return; }
+  }
+}
 const streamPts = buildStreamPoints();
-const sky = buildSky(small ? 3500 : 7000);
+const sky = buildSky(small ? 6000 : 13000);
 gcs.material.uniforms.uVis.value = 1;
 const dmScene = new THREE.Scene();
-[lssL, lssF, web, halo, subs].forEach(o => { o.frustumCulled = false; dmScene.add(o); });
-[streamPts, gcs, bulge, disk, neighbors].forEach(o => { o.frustumCulled = false; scene.add(o); });
+[web, halo, subs].forEach(o => { o.frustumCulled = false; dmScene.add(o); });
+[field, streamPts, gcs, bulge, disk, neighbors].forEach(o => { o.frustumCulled = false; scene.add(o); });
 sky.frustumCulled = false; bgScene.add(sky);
 const subP = new Float64Array(SUB.length * 3), subV = new Float64Array(SUB.length * 3);
 SUB.forEach((s, i) => { subP.set(s.pos, i * 3); subV.set(s.vel, i * 3); });
@@ -1205,15 +1317,18 @@ function scrollTarget() {
   const sc = (k) => (k === 'hero' || k === 'cta') ? 0 : k === 'model' ? 0.4 : 1;
   return { d: Math.exp(mixA(Math.log(p.d), Math.log(q.d), t)), el: mixA(p.el, q.el, t), az: mixA(p.az, q.az, t), film: mixA(p.film, q.film, t), filmY: mixA(p.filmY, q.filmY, t), scrim: mixA(sc(A[i].k), sc(A[i + 1].k), t) };
 }
-const INTRO_KEYS = [[0, 26000, 38, 70], [0.3, 15000, 34, 55], [0.55, 5200, 26, 38], [0.78, 1150, 16, 20], [0.92, 170, 22, 6], [1, 52, 6, 0]];
-function introCam(tau) {
-  let i = 0; while (i < INTRO_KEYS.length - 2 && tau > INTRO_KEYS[i + 1][0]) i++;
-  const a = INTRO_KEYS[i], b = INTRO_KEYS[i + 1]; const t = smooth(0, 1, (tau - a[0]) / (b[0] - a[0]));
-  return { d: Math.exp(mixA(Math.log(a[1]), Math.log(b[1]), t)), el: mixA(a[2], b[2], t), az: mixA(a[3], b[3], t), film: 0, filmY: 0, scrim: 0 };
+// One continuous dolly from 26 Mpc to the hero, driven by the intro clock (not by cosmic time, which runs a^1.5):
+// a constant rate in log distance, eased only at the two ends, so it never surges or stalls between scales.
+const INTRO_FROM = { d: 26000, el: 38, az: 70 }, INTRO_TO = { d: 52, el: 6, az: 0 };
+function introCam(s) {
+  const ta = 0.15, v = 1 / (1 - ta);             // trapezoidal velocity: ease in, constant rate, ease out
+  const e = s < ta ? v * s * s / (2 * ta) : s > 1 - ta ? 1 - v * (1 - s) ** 2 / (2 * ta) : v * (s - ta / 2);
+  const t = clamp(e, 0, 1);
+  return { d: Math.exp(mixA(Math.log(INTRO_FROM.d), Math.log(INTRO_TO.d), t)), el: mixA(INTRO_FROM.el, INTRO_TO.el, t), az: mixA(INTRO_FROM.az, INTRO_TO.az, t), film: 0, filmY: 0, scrim: 0 };
 }
 const cam = params.has('stop') ? { ...STOPS[params.get('stop')] } : { ...STOPS.hero };
 let webFlow = +(params.get('flow') || 0), webT = +(params.get('webt') || 0);   // exaggerated post-z=0 growth of the web, and its clock
-let lssFlow = +(params.get('lflow') || 0), lssT = 0;                              // the large-scale lattice runs its own, faster clock
+let lssFlow = +(params.get('lflow') || 0), lssT = 0, lssAz = 0;   // lssAz: steady one-way camera drift at the largest scale, degrees                              // the large-scale lattice runs its own, faster clock
 const user = { az: 0, el: 0 };
 let drag = null;
 canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, id: e.pointerId }; canvas.classList.add('dragging'); });
@@ -1231,15 +1346,25 @@ canvas.addEventListener('dblclick', () => { user.az = 0; user.el = 0; });
    ===================================================================== */
 const forcedTau = params.has('tau') ? clamp(parseFloat(params.get('tau')), 0.02, 1) : null;
 const A0 = 0.07;
-const intro = { s: 1, playing: false, speed: 1 / 13 };
+const INTRO_SECONDS = 8;
+const intro = { s: 1, playing: false, speed: 1 / INTRO_SECONDS };
 const skipBtn = document.getElementById('skip');
-function startIntro() { Object.assign(cam, { d: 26000, el: 38, az: 70, filmY: 0 }); intro.s = 0; intro.playing = true; intro.speed = 1 / 13; skipBtn.hidden = false; }
+// The formation sequence doubles as the loading animation: it plays on arrival with the page copy hidden and scrolling
+// locked at the top, and hands over to the hero once z = 0. Skip, a scroll or a swipe fast-forwards it.
+const htmlEl = document.documentElement;
+const REPLAY_SECONDS = 24;                                                // a replay is asked for, so it takes its time
+function startIntro(seconds = INTRO_SECONDS) {
+  Object.assign(cam, { d: 26000, el: 38, az: 70, filmY: 0 }); intro.s = 0; intro.playing = true; intro.speed = 1 / seconds; skipBtn.hidden = false;
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+  scrollTo(0, 0); htmlEl.classList.add('intro-on');
+}
+function endIntro() { intro.s = 1; intro.playing = false; skipBtn.hidden = true; htmlEl.classList.remove('intro-on'); }
 if (forcedTau !== null) { intro.s = (Math.pow(forcedTau, 2 / 3) - A0) / (1 - A0); }
-else if (params.has('intro') && !reduceMotion) startIntro();
+else if (!reduceMotion && (params.has('intro') || !(params.has('stop') || params.has('nointro')))) startIntro();
 skipBtn.addEventListener('click', () => { intro.speed = 1 / 1.2; });
 addEventListener('wheel', () => { if (intro.playing) intro.speed = Math.max(intro.speed, 1 / 1.5); }, { passive: true });
 addEventListener('touchmove', () => { if (intro.playing) intro.speed = Math.max(intro.speed, 1 / 1.5); }, { passive: true });
-document.getElementById('replay').addEventListener('click', () => { scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' }); startIntro(); });
+document.getElementById('replay').addEventListener('click', () => startIntro(REPLAY_SECONDS));
 const PHASES = [[0.06, 'Linear growth · Zel’dovich displacements'], [0.2, 'Shell crossing · the web condenses'], [0.42, 'Turnaround · inner shells virialise first'], [0.62, 'Gas cools · the bulge forms'], [0.9, 'Inside-out disk growth'], [1.01, 'z = 0 · NGC 4594']];
 
 /* =====================================================================
@@ -1253,7 +1378,8 @@ for (const [k, id] of Object.entries(layerIds)) {
   b.setAttribute('aria-pressed', String(layers[k]));
   b.addEventListener('click', () => { layers[k] = !layers[k]; b.setAttribute('aria-pressed', String(layers[k])); });
 }
-let rate = reduceMotion ? 0 : 2;
+let rate = reduceMotion ? 0 : 1;                                        // Myr of galaxy time per second: 0, 1 kyr, 1 Myr, 5 Myr
+const flowRate = () => rate > 0 ? clamp(1 + 0.25 * Math.log10(rate), 0.25, 1.5) : 0;   // the (exaggerated) web flow follows the rate gently
 document.querySelectorAll('.rate button').forEach(b => {
   b.setAttribute('aria-pressed', String(+b.dataset.rate === rate));
   b.addEventListener('click', () => { rate = +b.dataset.rate; document.querySelectorAll('.rate button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); });
@@ -1272,7 +1398,7 @@ function updateHud(tau, a, d, el) {
   const ph = intro.s < 1 || forcedTau !== null ? PHASES.find(p => tau < p[0])[1] : '';
   if (hud.phase.textContent !== ph) hud.phase.textContent = ph;
   hud.z.textContent = z.toFixed(z > 1 ? 2 : 3);
-  hud.t.textContent = tau < 0.999 ? `${(tau * T0_GYR).toFixed(2)} Gyr` : `t₀ + ${Math.round(simT)} Myr`;
+  hud.t.textContent = tau < 0.999 ? `${(tau * T0_GYR).toFixed(2)} Gyr` : (simT < 1 ? `t₀ + ${Math.round(simT * 1000)} kyr` : `t₀ + ${simT < 100 ? simT.toFixed(1) : Math.round(simT)} Myr`);
   hud.i.textContent = `${(90 - Math.abs(el)).toFixed(1)}°`;
   hud.d.textContent = fmtLen(d * a, false);
   const pxPerKpc = (innerHeight / 2) / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * d);
@@ -1411,6 +1537,8 @@ function paramTable() {
     ['Black hole', 'Softened point mass', `M• = ${e(MBH, 0)} M☉`, 'Kormendy et al. 1996'],
     ['Rotation', 'Ω(R) = v<sub>c</sub>/R from the summed potential', `v<sub>c,max</sub> ≈ ${Math.round(vmax)} km/s · V₂₀₀ = ${Math.round(Math.sqrt(GM200 / R200) / KMS)} km/s`, '—'],
     ['Spiral arms', 'm = 2 trailing density wave; OB stars and H II regions lit when orbits cross the crest', `pitch 15° · corotation ${R_CR} kpc · Ω<sub>p</sub> = ${(OMEGA_P / KMS).toFixed(1)} km/s/kpc`, 'Lin &amp; Shu 1964'],
+    ['Field galaxies', 'Schechter luminosity function, placed on web particles with weight ρ<sup>1.5</sup>; red spheroids in knots, blue disks in the field; size–luminosity relations', `${field.count} galaxies · φ* = ${SCH.phi} Mpc<sup>−3</sup> · α = ${SCH.alpha} · L > ${SCH.lmin} L* · 1 + δ = ${1 + SCH.delta}`, 'Schechter 1976; Blanton et al. 2003; Dressler 1980'],
+    ['Satellites', 'Only subhalos above 3×10<sup>9</sup> M☉ host a visible dwarf (M* ∝ M<sub>h</sub><sup>2</sup> at low mass); the rest stay dark', `${SUB.lit} lit of ${SUB.length - SUB.neigh.length} subhalos`, 'Moster, Naab &amp; White 2013; Behroozi et al. 2013'],
     ['Globular clusters', 'Bimodal: metal-poor (blue, extended) and metal-rich (red, concentrated)', '≈ 1900 clusters', 'Rhode &amp; Zepf 2004'],
     ['Stellar stream', 'Particle spray from a disrupting satellite, integrated in Φ', `${STREAM.N} particles, released over 3.2 Gyr`, 'Fardal, Huang &amp; Weinberg 2015; Martínez-Delgado et al. 2021'],
     ['Initial conditions', 'Zel’dovich displacements from a Gaussian random field, BBKS transfer function', `Ω<sub>m</sub> = ${OMEGA_M} · h = ${h} · n<sub>s</sub> = ${N_S}`, 'Zel’dovich 1970; Bardeen et al. 1986'],
@@ -1429,7 +1557,7 @@ rotationChart(); massFunctionChart(); paramTable();
 /* =====================================================================
    13. Main loop
    ===================================================================== */
-let simT = 0, subT = 0, streamT = 0, dPhysPrev = 52;
+let simT = 0, subT = 0, streamT = 0, dPhysPrev = 52, streamOn = 0, lssOn = 0, fadeIn = 0, gcVis = 0, stVis = 0;
 const gen = streamBuilder();
 function stepStream() { if (!STREAM.ready) { gen.next(); return; } }
 setTimeout(function chunk() { if (!STREAM.ready) { for (let i = 0; i < 1; i++) gen.next(); setTimeout(chunk, 0); } }, 300);
@@ -1451,7 +1579,7 @@ function frame(now) {
   }
 
   // --- cosmic time
-  if (intro.playing) { intro.s += dt * intro.speed; if (intro.s >= 1) { intro.s = 1; intro.playing = false; skipBtn.hidden = true; } }
+  if (intro.playing) { intro.s += dt * intro.speed; if (intro.s >= 1) endIntro(); }
   const a = A0 + (1 - A0) * clamp(intro.s, 0, 1);
   const tau = a >= 0.9999 ? 1 : Math.pow(a, 1.5);
   const introOn = tau < 0.9999;
@@ -1475,15 +1603,19 @@ function frame(now) {
   subTex.needsUpdate = true;
 
   // --- camera
-  const tgt = introOn ? introCam(tau) : scrollTarget();
+  const tgt = introOn ? introCam(clamp(intro.s, 0, 1)) : scrollTarget();
   const k = introOn ? 1 : 1 - Math.exp(-dt * 2.6);
   cam.d = Math.exp(mixA(Math.log(cam.d), Math.log(tgt.d), k));
   cam.el = mixA(cam.el, tgt.el, k); cam.az = mixA(cam.az, tgt.az, k); cam.film = mixA(cam.film, small ? 0 : tgt.film, k); cam.filmY = mixA(cam.filmY ?? 0, tgt.filmY ?? 0, k);
   scrimEl.style.setProperty('--scrim', (tgt.scrim ?? 0).toFixed(3));
   const aspectBoost = camera.aspect < 1 ? Math.min(2.2, 0.85 / camera.aspect) : 1;
   const d = cam.d * (introOn ? 1 : aspectBoost);
-  const webVis = introOn ? 0 : smooth(900, 6000, dPhysPrev);
-  const el = clamp(cam.el + user.el, -85, 85) * Math.PI / 180, az = (cam.az + user.az + 9 * Math.sin(webT * 0.12) * webVis + 6 * Math.sin(lssT * 0.1) * smooth(25000, 90000, dPhysPrev)) * Math.PI / 180;
+  const lssW = introOn ? 0 : smooth(25000, 90000, dPhysPrev);
+  const webVis = introOn ? 0 : smooth(900, 6000, dPhysPrev) * (1 - lssW);   // the web-scale sway hands over to the one-way drift
+  // drift ~0.4 deg/s at the default rate, one direction only; wrapped only when fully zoomed out (a 360 jump is invisible),
+  // so zooming back in unwinds at most half a turn
+  if (!introOn) { lssAz += dt * 0.4 * flowRate() * lssW; if (lssW > 0.99 && lssAz > 180) lssAz -= 360; if (lssW < 0.01) lssAz = 0; }
+  const el = clamp(cam.el + user.el, -85, 85) * Math.PI / 180, az = (cam.az + user.az + 9 * Math.sin(webT * 0.12) * webVis + lssAz * lssW) * Math.PI / 180;
   camera.position.set(d * Math.cos(el) * Math.sin(az), d * Math.sin(el), d * Math.cos(el) * Math.cos(az));
   camera.up.set(0, 1, 0); camera.lookAt(0, 0, 0);
   if (Math.abs(cam.film) > 1e-3 || Math.abs(cam.filmY) > 1e-3) camera.setViewOffset(W, H, cam.film * W, cam.filmY * H, W, H); else camera.clearViewOffset();
@@ -1495,22 +1627,34 @@ function frame(now) {
   // the web keeps flowing after z = 0 (sticky Zel'dovich), ~1 Gyr per 10 s at the default rate, only while it is on screen
   const lssVis = smooth(25000, 90000, dPhys);
   if (!introOn) {
-    const rf = clamp(rate / 2, 0, 2.5) * smooth(900, 6000, dPhys); webFlow = Math.min(webFlow + dt * 0.05 * rf, 2.5); webT += dt * rf;
-    const rfL = clamp(rate / 2, 0, 2.5) * lssVis * 4;                     // four times faster once the large-scale view is on screen
+    const rf = flowRate() * smooth(900, 6000, dPhys); webFlow = Math.min(webFlow + dt * 0.05 * rf, 2.5); webT += dt * rf;
+    const rfL = flowRate() * lssVis * 4;                     // four times faster once the large-scale view is on screen
     lssFlow = Math.min(lssFlow + dt * 0.05 * rfL, 3); lssT += dt * rfL;
   }
   web.material.uniforms.uD.value = a + webFlow; web.material.uniforms.uWebT.value = webT;
-  lssL.material.uniforms.uD.value = a + lssFlow; lssL.material.uniforms.uWebT.value = lssT;
-  const lssShow = introOn ? 0.5 * (1 - smooth(0.5, 0.8, tau)) : lssVis;
-  lssL.material.uniforms.uVis.value = lssShow; lssF.material.uniforms.uVis.value = lssShow; lssF.material.uniforms.uFlow.value = lssFlow;
+  pumpLSS(lssVis > 0.001 ? 1e9 : 7);                                  // ~7 ms a frame in the background; all at once if it is needed on screen now
+  if (lssL) {
+    lssL.material.uniforms.uD.value = a + lssFlow; lssL.material.uniforms.uWebT.value = lssT;
+    lssOn = Math.min(1, lssOn + dt / 2);                               // ease in over 2 s once the background build lands
+    const lssShow = (introOn ? 0.5 * (1 - smooth(0.5, 0.8, tau)) : lssVis) * smooth(0, 1, lssOn);
+    lssL.material.uniforms.uVis.value = lssShow; lssF.material.uniforms.uVis.value = lssShow; lssF.material.uniforms.uFlow.value = lssFlow;
+  }
   camGal.copy(camera.position).multiplyScalar(a); U.uCamGal.value.copy(camGal);
+  const lnD = Math.log(dPhys);
+  // globulars and the stream: off at the closest stops, rising across the whole hero-to-halo zoom (log distance),
+  // then low-passed in time (~0.7 s) so even a fast scroll fades them rather than switching them
+  const nearOff = smooth(Math.log(58), Math.log(420), lnD), kVis = 1 - Math.exp(-dt * 1.4);
+  gcVis += ((layers.gc ? nearOff : 0) - gcVis) * kVis;
+  stVis += ((layers.stream ? nearOff * (1 - smooth(Math.log(1200), Math.log(7000), lnD)) : 0) - stVis) * kVis;
+  if (STREAM.ready) streamOn = Math.min(1, streamOn + dt / 2);     // ease in over 2 s once the spray has been integrated
   const dustOn = layers.dust ? smooth(0.6, 0.95, tau) : 0;
   U.uDust.value = dustOn;
   const starsOn = layers.stars ? 1 : 0;
   disk.material.uniforms.uStars.value = starsOn * 0.022;
   bulge.material.uniforms.uVis.value = starsOn * 0.07;
-  gcs.material.uniforms.uVis.value = layers.gc ? 0.09 : 0;
+  gcs.material.uniforms.uVis.value = 0.09 * gcVis;
   neighbors.material.uniforms.uVis.value = starsOn * 0.35;
+  field.material.uniforms.uVis.value = starsOn * (1 - smooth(30000, 80000, dPhys));
   const introW = introOn ? 1 - smooth(0.55, 0.95, tau) : 0;
   const dmZoom = smooth(50, 420, dPhys);
   halo.material.uniforms.uVis.value = introOn ? mixA(0.025, 1.0, dmZoom) : layers.dm ? mixA(0.025, 1.0, dmZoom) : smooth(110, 420, dPhys);
@@ -1518,7 +1662,7 @@ function frame(now) {
   subs.material.uniforms.uVis.value = (layers.sub ? smooth(90, 600, dPhys) * 0.5 : 0) * (introOn ? smooth(0.15, 0.4, tau) : 1);
   web.material.uniforms.uVis.value = smooth(900, 6000, dPhys) * (1 - introW) + introW;
   web.material.uniforms.uIntro.value = introW;
-  streamPts.material.uniforms.uVis.value = layers.stream ? smooth(40, 110, dPhys) * (1 - smooth(1800, 5000, dPhys)) : 0;
+  streamPts.material.uniforms.uVis.value = smooth(0, 1, streamOn) * stVis;
   volMat.uniforms.uGal.value = smooth(0.1, 0.7, tau);
   volMat.uniforms.uStars.value = starsOn;
   volMat.uniforms.uCamPos.value.copy(camera.position);
@@ -1526,6 +1670,8 @@ function frame(now) {
   volMat.uniforms.uCamWorld.value.copy(camera.matrixWorld);
   sky.material.uniforms.uSky.value = 1;
   finalMat.uniforms.uTimeS.value = now / 1000;
+  fadeIn = Math.min(1, fadeIn + dt / 1.5);                            // the first frames rise out of black instead of popping
+  finalMat.uniforms.uFade.value = smooth(0, 1, fadeIn);
 
   // --- render: volume -> HDR (sky, volume composite, particles) -> bloom -> tone map
   pass(volMat, volRT);

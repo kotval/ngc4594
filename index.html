@@ -1,4 +1,6 @@
 <meta charset="utf-8">
+<script>/* hide the copy before first paint when the formation intro will play (galaxy.js removes this at z = 0) */
+(function () { var h = location.hash; if (!/stop=|nointro|tau=/.test(h) && !matchMedia('(prefers-reduced-motion: reduce)').matches) document.documentElement.classList.add('intro-on'); })();</script>
 <title>NGC 4594</title>
 <meta name="description" content="A live ΛCDM model of the Sombrero galaxy and its dark matter halo, rendered the way Hubble sees it.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -211,6 +213,10 @@ footer.colophon {
   .facts li { grid-template-columns: 1fr; gap: 2px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+/* the formation sequence is the loading animation: the HUD narrates it, the captions wait for z = 0 */
+.nav, main { transition: opacity 1.4s ease; }
+html.intro-on { overflow: hidden; }
+html.intro-on .nav, html.intro-on main, html.intro-on .scrim { opacity: 0; pointer-events: none; }
 </style>
 
 <canvas id="gl" aria-label="Live rendering of the Sombrero galaxy (NGC 4594) inside its dark matter halo. Drag to rotate, double-click to reset."></canvas>
@@ -351,9 +357,9 @@ footer.colophon {
       <div class="rate" role="group" aria-label="Time rate">
         <span>Δt/s</span>
         <button type="button" data-rate="0" id="R0">0</button>
-        <button type="button" data-rate="2" id="R2" aria-pressed="true">2 Myr</button>
-        <button type="button" data-rate="15" id="R15">15 Myr</button>
-        <button type="button" data-rate="80" id="R80">80 Myr</button>
+        <button type="button" data-rate="0.001" id="R1k">1 kyr</button>
+        <button type="button" data-rate="1" id="R1" aria-pressed="true">1 Myr</button>
+        <button type="button" data-rate="5" id="R5">5 Myr</button>
       </div>
       <button type="button" class="link" id="replay">Replay formation, z = 13 → 0</button>
     </div>
