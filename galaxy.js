@@ -1,5 +1,5 @@
 /* NGC 4594: a live ΛCDM model of the Sombrero galaxy, its dark matter halo and the cosmic web around it.
-   Shared by better_index.html and bare_index.html. A classic script so the pages work from file://;
+   Shared by index.html and demo_landing_page.html. A classic script so the pages work from file://;
    three.js is loaded with a dynamic import. */
 import('https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js').then((THREE) => {
 
