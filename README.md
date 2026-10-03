@@ -42,6 +42,7 @@ It was underwhelming. So I told Claude to look up some papers and start working 
 |---|---|
 | `index.html` | The model with the physics appendix. This is the GitHub Pages site. |
 | `demo_landing_page.html` | The same model dressed as a product landing page. |
+| `scaled.html` | The landing page with a performance panel: an FPS meter, quality presets, and sliders for particle detail and render resolution. |
 | `galaxy.js` | The simulation and renderer, shared by both pages. Uses [three.js](https://threejs.org/) from a CDN. |
 
 No build step. Open `index.html` in a browser, or serve the folder with any static server.

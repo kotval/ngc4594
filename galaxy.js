@@ -9,7 +9,7 @@ import('https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js').then(
 const params = new URLSearchParams(location.hash.slice(1));
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const small = Math.min(innerWidth, innerHeight) < 700 || (navigator.hardwareConcurrency || 8) <= 4;
-const Q = small ? 0.45 : 1.0;                 // particle budget multiplier
+const Q = params.has('q') ? Math.min(1.5, Math.max(0.05, +params.get('q') || 1)) : small ? 0.45 : 0.6;   // default = the Balanced preset   // particle budget multiplier (#q= overrides, see scaled.html)
 const TAU = Math.PI * 2;
 
 /* =====================================================================
@@ -1120,7 +1120,13 @@ const canvas = document.getElementById('gl');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance' });
 renderer.autoClear = false;
 renderer.setClearColor(0x000000, 1);
-let DPR = Math.min(devicePixelRatio || 1, small ? 1.25 : 1.75), VOL_SCALE = small ? 0.4 : 0.6;
+let DPR = params.has('dpr') ? clamp(+params.get('dpr') || 1, 0.3, 3) : 1;
+let VOL_SCALE = params.has('vol') ? clamp(+params.get('vol') || 0.6, 0.15, 1) : small ? 0.4 : 0.45;
+let SPK_SCALE = params.has('spk') ? clamp(+params.get('spk') || 1, 0.25, 1) : 0.5;
+// Pixel budget: a 4K or ultrawide window at full size would cost 4-5x a 1080p one. Unless a ratio is forced (#dpr=),
+// the render resolution is capped at ~2.4 M pixels and upscaled, which keeps the frame rate where Balanced was tuned.
+const PIXEL_BUDGET = 2.4e6;
+const effDpr = (W, H) => params.has('dpr') ? DPR : Math.min(DPR, Math.sqrt(PIXEL_BUDGET / Math.max(1, W * H)));
 const camera = new THREE.PerspectiveCamera(22, innerWidth / innerHeight, 0.05, 5e7);
 const rtOpts = { type: THREE.HalfFloatType, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false };
 let hdrRT, volRT, dmRT, mips = [];
@@ -1240,10 +1246,11 @@ const finalMat = new THREE.ShaderMaterial({
 let W = 1, H = 1;
 function resize() {
   W = innerWidth; H = innerHeight;
-  renderer.setPixelRatio(DPR); renderer.setSize(W, H, false);
-  const bw = Math.floor(W * DPR), bh = Math.floor(H * DPR);
+  const dpr = effDpr(W, H);
+  renderer.setPixelRatio(dpr); renderer.setSize(W, H, false);
+  const bw = Math.floor(W * dpr), bh = Math.floor(H * dpr);
   hdrRT?.dispose(); volRT?.dispose(); dmRT?.dispose(); mips.forEach(m => m.dispose()); spk.forEach(m => m.dispose());
-  const sw = small ? 0.5 : 1; spk = [0, 1, 2].map(() => new THREE.WebGLRenderTarget(Math.max(2, Math.floor(bw * sw)), Math.max(2, Math.floor(bh * sw)), rtOpts));
+  const sw = SPK_SCALE; spk = [0, 1, 2].map(() => new THREE.WebGLRenderTarget(Math.max(2, Math.floor(bw * sw)), Math.max(2, Math.floor(bh * sw)), rtOpts));
   hdrRT = new THREE.WebGLRenderTarget(bw, bh, rtOpts);
   dmRT = new THREE.WebGLRenderTarget(Math.floor(bw * 0.75), Math.floor(bh * 0.75), rtOpts);
   volRT = new THREE.WebGLRenderTarget(Math.max(2, Math.floor(bw * VOL_SCALE)), Math.max(2, Math.floor(bh * VOL_SCALE)), rtOpts);
@@ -1252,7 +1259,7 @@ function resize() {
   for (let i = 0; i < 6; i++) { mw = Math.max(1, mw >> 1); mh = Math.max(1, mh >> 1); mips.push(new THREE.WebGLRenderTarget(mw, mh, rtOpts)); }
   camera.aspect = W / H;
   U.uPxScale.value = bh / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
-  sky.material.uniforms.uDpr.value = DPR;
+  sky.material.uniforms.uDpr.value = dpr;
   finalMat.uniforms.uRes.value.set(bw, bh);
   annot.width = Math.floor(W * devicePixelRatio); annot.height = Math.floor(H * devicePixelRatio);
   computeStops();
@@ -1378,8 +1385,8 @@ for (const [k, id] of Object.entries(layerIds)) {
   b.setAttribute('aria-pressed', String(layers[k]));
   b.addEventListener('click', () => { layers[k] = !layers[k]; b.setAttribute('aria-pressed', String(layers[k])); });
 }
-let rate = reduceMotion ? 0 : 1;                                        // Myr of galaxy time per second: 0, 1 kyr, 1 Myr, 5 Myr
-const flowRate = () => rate > 0 ? clamp(1 + 0.25 * Math.log10(rate), 0.25, 1.5) : 0;   // the (exaggerated) web flow follows the rate gently
+let rate = reduceMotion ? 0 : 0.5;                                      // Myr of galaxy time per second: 0, 500 kyr, 1 Myr, 5 Myr
+const flowRate = () => rate > 0 ? clamp(1 + 0.25 * Math.log10(rate / 0.5), 0.5, 1.5) : 0;   // the (exaggerated) web flow follows the rate gently, 1 at the default
 document.querySelectorAll('.rate button').forEach(b => {
   b.setAttribute('aria-pressed', String(+b.dataset.rate === rate));
   b.addEventListener('click', () => { rate = +b.dataset.rate; document.querySelectorAll('.rate button').forEach(x => x.setAttribute('aria-pressed', String(x === b))); });
@@ -1397,15 +1404,17 @@ function updateHud(tau, a, d, el) {
   const z = 1 / a - 1;
   const ph = intro.s < 1 || forcedTau !== null ? PHASES.find(p => tau < p[0])[1] : '';
   if (hud.phase.textContent !== ph) hud.phase.textContent = ph;
-  hud.z.textContent = z.toFixed(z > 1 ? 2 : 3);
-  hud.t.textContent = tau < 0.999 ? `${(tau * T0_GYR).toFixed(2)} Gyr` : (simT < 1 ? `t₀ + ${Math.round(simT * 1000)} kyr` : `t₀ + ${simT < 100 ? simT.toFixed(1) : Math.round(simT)} Myr`);
-  hud.i.textContent = `${(90 - Math.abs(el)).toFixed(1)}°`;
-  hud.d.textContent = fmtLen(d * a, false);
+  // write only on change: the HUD sits on a blurred panel, so every DOM write re-blurs that patch of the canvas
+  const put = (e, v) => { if (e.textContent !== v) e.textContent = v; };
+  put(hud.z, z.toFixed(z > 1 ? 2 : 3));
+  put(hud.t, tau < 0.999 ? `${(tau * T0_GYR).toFixed(2)} Gyr` : (simT < 1 ? `t₀ + ${Math.round(simT * 1000)} kyr` : `t₀ + ${simT < 100 ? simT.toFixed(1) : Math.round(simT)} Myr`));
+  put(hud.i, `${(90 - Math.abs(el)).toFixed(1)}°`);
+  put(hud.d, fmtLen(d * a, false));
   const pxPerKpc = (innerHeight / 2) / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * d);
   const target = 110 / pxPerKpc; const p10 = Math.pow(10, Math.floor(Math.log10(target)));
   const nice = [1, 2, 5, 10].map(x => x * p10).reduce((b, x) => Math.abs(x - target) < Math.abs(b - target) ? x : b);
-  hud.bar.style.width = `${Math.round(nice * pxPerKpc)}px`;
-  hud.barL.textContent = fmtLen(nice, tau < 0.999);
+  const bw = `${Math.round(nice * pxPerKpc)}px`; if (hud.bar.style.width !== bw) hud.bar.style.width = bw;
+  put(hud.barL, fmtLen(nice, tau < 0.999));
 }
 document.querySelectorAll('[data-scale]').forEach(el => { el.textContent = fmtLen(STOPS[el.dataset.scale].d, false); });
 
@@ -1557,7 +1566,7 @@ rotationChart(); massFunctionChart(); paramTable();
 /* =====================================================================
    13. Main loop
    ===================================================================== */
-let simT = 0, subT = 0, streamT = 0, dPhysPrev = 52, streamOn = 0, lssOn = 0, fadeIn = 0, gcVis = 0, stVis = 0;
+let hudT = -1e9, simT = 0, subT = 0, streamT = 0, dPhysPrev = 52, streamOn = 0, lssOn = 0, fadeIn = 0, gcVis = 0, stVis = 0;
 const gen = streamBuilder();
 function stepStream() { if (!STREAM.ready) { gen.next(); return; } }
 setTimeout(function chunk() { if (!STREAM.ready) { for (let i = 0; i < 1; i++) gen.next(); setTimeout(chunk, 0); } }, 300);
@@ -1573,7 +1582,7 @@ function frame(now) {
   const dt = clamp((now - last) / 1000, 0, 0.1); last = now;
   ema = ema * 0.95 + dt * 1000 * 0.05;
   perfT += dt;
-  if (!perfChecked && perfT > 4) {
+  if (!perfChecked && perfT > 4 && !params.has('dpr')) {
     perfChecked = true;
     if (ema > 30) { DPR = Math.max(1, DPR * 0.75); VOL_SCALE = 0.4; resize(); }
   }
@@ -1695,11 +1704,17 @@ function frame(now) {
   pass(finalMat, null);
 
   drawAnnotations(layers.ann && !introOn ? smooth(110, 260, dPhys) : 0, a);
-  updateHud(tau, a, d, cam.el + user.el);
+  if (now - hudT > 100) { hudT = now; updateHud(tau, a, d, cam.el + user.el); }   // 10 Hz is plenty for a readout
   requestAnimationFrame(frame);
 }
 addEventListener('resize', resize);
 resize();
+// Live performance controls for scaled.html (the other pages never call these).
+window.galaxyPerf = {
+  get dpr() { return DPR; }, get effDpr() { return effDpr(W, H); }, get vol() { return VOL_SCALE; }, get spk() { return SPK_SCALE; }, Q,
+  set(o) { if (o.dpr) DPR = o.dpr; if (o.vol) VOL_SCALE = o.vol; if (o.spk) SPK_SCALE = o.spk; perfChecked = true; resize(); },
+  points() { let n = 0; [scene, dmScene, bgScene].forEach(s => s.traverse(o => { if (o.isPoints) n += o.geometry.drawRange.count === Infinity ? o.geometry.attributes.position.count : o.geometry.drawRange.count; })); return n; },
+};
 requestAnimationFrame(frame);
 if (params.has('debug')) setTimeout(() => {
   const rd = (rt) => { const b = new Float32Array(4); try { renderer.readRenderTargetPixels(rt, rt.width >> 1, rt.height >> 1, 1, 1, b); } catch (e) { return String(e); } return [...b].map(x => +x.toFixed(4)); };

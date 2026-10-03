@@ -1,7 +1,7 @@
 <meta charset="utf-8">
 <script>/* hide the copy before first paint when the formation intro will play (galaxy.js removes this at z = 0) */
 (function () { var h = location.hash; if (!/stop=|nointro|tau=/.test(h) && !matchMedia('(prefers-reduced-motion: reduce)').matches) document.documentElement.classList.add('intro-on'); })();</script>
-<title>Omnia</title>
+<title>Omnia · scaled</title>
 <meta name="description" content="Omnia — everything, held together. The logo is a live ΛCDM model of the Sombrero galaxy and its dark matter halo, rendered the way Hubble sees it.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -217,10 +217,39 @@ footer.colophon {
 .nav, main, footer.colophon, .hud { transition: opacity 1.4s ease; }
 html.intro-on { overflow: hidden; }
 html.intro-on .nav, html.intro-on main, html.intro-on footer.colophon, html.intro-on .hud, html.intro-on .scrim { opacity: 0; pointer-events: none; }
-/* Balanced default: no glass blur behind the panels (it re-blurs the live canvas every frame) */
-.hud, .model-panel { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-.hud { background: rgba(6,7,12,.86); }
-.model-panel { background: var(--plate); }
+/* ---------- performance panel (scaled.html only) ---------- */
+html.noblur .hud, html.noblur .model-panel { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+html.noblur .hud { background: rgba(6,7,12,.86); }
+html.noblur .model-panel { background: var(--plate); }
+.perf {
+  position: fixed; z-index: 12; top: calc(env(safe-area-inset-top, 0px) + 72px); right: var(--gutter); width: 17.5rem;
+  display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 6px;
+  max-height: calc(100vh - 96px); overflow-y: auto;
+  background: rgba(6,7,12,.9); border: 1px solid var(--rule);
+  font: .6875rem/1.45 var(--font-mono); color: var(--ink-dim); font-variant-numeric: tabular-nums;
+}
+.perf .fps { display: flex; align-items: baseline; gap: 8px; }
+.perf .fps b { font: 500 1.75rem/1 var(--font-mono); color: var(--ink); }
+.perf .fps.warn b { color: var(--accent); }
+.perf .fps.bad b { color: #ff7a7a; }
+.perf .row { display: flex; justify-content: space-between; gap: 10px; }
+.perf .v { color: var(--ink); }
+.perf label { display: flex; flex-direction: column; gap: 4px; }
+.perf label span { display: flex; justify-content: space-between; }
+.perf input[type=range] { width: 100%; accent-color: var(--accent); }
+.perf .check { flex-direction: row; align-items: center; gap: 8px; cursor: pointer; }
+.perf .btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.perf button {
+  font: inherit; color: var(--ink-dim); background: transparent; border: 1px solid var(--rule);
+  border-radius: 999px; padding: 4px 9px; cursor: pointer;
+}
+.perf button:hover { color: var(--ink); border-color: #5a6074; }
+.perf button.primary { color: var(--void); background: var(--ink); border-color: var(--ink); }
+.perf button.primary[disabled] { opacity: .4; cursor: default; }
+.perf details summary { cursor: pointer; color: var(--ink); list-style: none; }
+.perf details summary::-webkit-details-marker { display: none; }
+.perf details > div { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+@media (max-width: 760px) { .perf { top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 150px); left: var(--gutter); right: var(--gutter); width: auto; } }
 </style>
 
 <canvas id="gl" aria-label="Live rendering of the Sombrero galaxy (NGC 4594) inside its dark matter halo. Drag to rotate, double-click to reset."></canvas>
@@ -414,4 +443,95 @@ if (location.hash.includes('debug')) { window.__log = []; const ce = console.err
   addEventListener('error', e => __log.push('X ' + e.message + ' ' + e.lineno));
   setInterval(() => { document.body.dataset.log = JSON.stringify(window.__log.slice(0, 20)).slice(0, 4000); document.body.dataset.ok = String(!!window.__omnia); }, 500); }
 </script>
+<aside class="perf" aria-label="Performance">
+  <div class="fps" id="pf-fps"><b id="pf-fps-v">–</b><span>fps</span></div>
+  <div class="row"><span>avg <span class="v" id="pf-avg">–</span> ms</span><span>worst <span class="v" id="pf-worst">–</span> ms</span></div>
+  <div class="row"><span>points <span class="v" id="pf-pts">–</span></span><span>pixels <span class="v" id="pf-px">–</span></span></div>
+  <details id="pf-more">
+    <summary>Quality ▸</summary>
+    <div>
+      <div class="btns" role="group" aria-label="Presets">
+        <button type="button" data-preset="full">Full</button>
+        <button type="button" data-preset="balanced">Balanced</button>
+        <button type="button" data-preset="light">Light</button>
+      </div>
+      <label>Particle detail <span><span>fewer points</span><span class="v" id="pf-q-v"></span></span>
+        <input type="range" id="pf-q" min="0.1" max="1" step="0.05"></label>
+      <button type="button" class="primary" id="pf-apply" disabled>Apply detail (reloads)</button>
+      <label>Render resolution <span><span>device px per CSS px</span><span class="v" id="pf-dpr-v"></span></span>
+        <input type="range" id="pf-dpr" min="0.5" max="2" step="0.05"></label>
+      <label>Dust and starlight raymarch <span><span>of render resolution</span><span class="v" id="pf-vol-v"></span></span>
+        <input type="range" id="pf-vol" min="0.2" max="0.8" step="0.05"></label>
+      <label>Diffraction spikes <span><span>of render resolution</span><span class="v" id="pf-spk-v"></span></span>
+        <input type="range" id="pf-spk" min="0.25" max="1" step="0.05"></label>
+      <label class="check"><input type="checkbox" id="pf-blur"> Glass blur behind panels</label>
+      <label class="check"><input type="checkbox" id="pf-nointro"> Skip the intro on reload</label>
+    </div>
+  </details>
+</aside>
 <script src="galaxy.js"></script>
+<script>
+/* Performance panel. Detail rebuilds the scene (reload); everything else is live. Settings live in the URL hash. */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const hp = () => new URLSearchParams(location.hash.slice(1));
+  const PRESETS = { full: { q: 1, dpr: Math.min(devicePixelRatio || 1, 1.75), vol: 0.6, spk: 1, blur: true },
+                    balanced: { q: 0.6, dpr: 1, vol: 0.45, spk: 0.5, blur: false },
+                    light: { q: 0.3, dpr: 0.75, vol: 0.35, spk: 0.5, blur: false } };
+  const p0 = hp();
+  const blurOn = p0.get('blur') === '1';
+  document.documentElement.classList.toggle('noblur', !blurOn);
+  $('pf-blur').checked = blurOn;
+  $('pf-nointro').checked = p0.get('nointro') !== null || !p0.has('q');
+  // frame timing, measured independently of the renderer
+  let frames = 0, acc = 0, last = performance.now(), times = [];
+  function tick(now) {
+    const dt = now - last; last = now; frames++; acc += dt; times.push([now, dt]);
+    while (times.length && now - times[0][0] > 2000) times.shift();
+    if (acc >= 500) {
+      const fps = frames * 1000 / acc, el = $('pf-fps');
+      $('pf-fps-v').textContent = fps.toFixed(0);
+      el.classList.toggle('warn', fps < 50 && fps >= 30); el.classList.toggle('bad', fps < 30);
+      $('pf-avg').textContent = (acc / frames).toFixed(1);
+      $('pf-worst').textContent = Math.max(...times.map(t => t[1])).toFixed(1);
+      frames = 0; acc = 0;
+      const g = window.galaxyPerf;
+      if (g) { $('pf-pts').textContent = (g.points() / 1e6).toFixed(2) + ' M'; $('pf-px').textContent = (innerWidth * innerHeight * g.effDpr * g.effDpr / 1e6).toFixed(1) + ' M' + (g.effDpr < g.dpr - 1e-3 ? ' (capped)' : ''); }
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+  function writeHash(extra) {
+    const g = window.galaxyPerf, h = hp();
+    const v = Object.assign({ q: +$('pf-q').value, dpr: g ? g.dpr : +$('pf-dpr').value, vol: g ? g.vol : +$('pf-vol').value, spk: g ? g.spk : +$('pf-spk').value, blur: $('pf-blur').checked ? 1 : 0 }, extra || {});
+    for (const k of ['q', 'dpr', 'vol', 'spk', 'blur']) h.set(k, String(+(+v[k]).toFixed(2)));
+    if ($('pf-nointro').checked) h.set('nointro', ''); else h.delete('nointro');
+    return '#' + h.toString().replace(/nointro=(&|$)/, 'nointro$1');
+  }
+  function show(id, v, f) { $(id + '-v').textContent = f(v); }
+  const fmt = { q: (v) => '×' + (+v).toFixed(2), dpr: (v) => (+v).toFixed(2), vol: (v) => Math.round(v * 100) + '%', spk: (v) => Math.round(v * 100) + '%' };
+  function bind() {
+    const g = window.galaxyPerf;
+    if (!g) { setTimeout(bind, 100); return; }
+    $('pf-q').value = g.Q; show('pf-q', g.Q, fmt.q);
+    $('pf-dpr').value = g.dpr; show('pf-dpr', g.dpr, fmt.dpr);
+    $('pf-vol').value = g.vol; show('pf-vol', g.vol, fmt.vol);
+    $('pf-spk').value = g.spk; show('pf-spk', g.spk, fmt.spk);
+    $('pf-q').addEventListener('input', (e) => { show('pf-q', e.target.value, fmt.q); $('pf-apply').disabled = Math.abs(e.target.value - g.Q) < 1e-3; });
+    for (const k of ['dpr', 'vol', 'spk']) $('pf-' + k).addEventListener('input', (e) => { show('pf-' + k, e.target.value, fmt[k]); g.set({ [k]: +e.target.value }); history.replaceState(null, '', writeHash()); });
+    $('pf-apply').addEventListener('click', () => { location.hash = writeHash(); location.reload(); });
+    document.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => {
+      const p = PRESETS[b.dataset.preset];
+      $('pf-blur').checked = p.blur; document.documentElement.classList.toggle('noblur', !p.blur);
+      if (Math.abs(p.q - g.Q) > 1e-3) { location.hash = writeHash(p); location.reload(); return; }
+      g.set({ dpr: p.dpr, vol: p.vol, spk: p.spk });
+      for (const k of ['dpr', 'vol', 'spk']) { $('pf-' + k).value = p[k]; show('pf-' + k, p[k], fmt[k]); }
+      history.replaceState(null, '', writeHash());
+    }));
+  }
+  bind();
+  $('pf-blur').addEventListener('change', (e) => { document.documentElement.classList.toggle('noblur', !e.target.checked); history.replaceState(null, '', writeHash()); });
+  $('pf-nointro').addEventListener('change', () => history.replaceState(null, '', writeHash()));
+})();
+</script>
+

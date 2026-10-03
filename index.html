@@ -217,6 +217,10 @@ footer.colophon {
 .nav, main { transition: opacity 1.4s ease; }
 html.intro-on { overflow: hidden; }
 html.intro-on .nav, html.intro-on main, html.intro-on .scrim { opacity: 0; pointer-events: none; }
+/* Balanced default: no glass blur behind the panels (it re-blurs the live canvas every frame) */
+.hud, .model-panel { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+.hud { background: rgba(6,7,12,.86); }
+.model-panel { background: var(--plate); }
 </style>
 
 <canvas id="gl" aria-label="Live rendering of the Sombrero galaxy (NGC 4594) inside its dark matter halo. Drag to rotate, double-click to reset."></canvas>
@@ -357,8 +361,8 @@ html.intro-on .nav, html.intro-on main, html.intro-on .scrim { opacity: 0; point
       <div class="rate" role="group" aria-label="Time rate">
         <span>Δt/s</span>
         <button type="button" data-rate="0" id="R0">0</button>
-        <button type="button" data-rate="0.001" id="R1k">1 kyr</button>
-        <button type="button" data-rate="1" id="R1" aria-pressed="true">1 Myr</button>
+        <button type="button" data-rate="0.5" id="R500k" aria-pressed="true">500 kyr</button>
+        <button type="button" data-rate="1" id="R1">1 Myr</button>
         <button type="button" data-rate="5" id="R5">5 Myr</button>
       </div>
       <button type="button" class="link" id="replay">Replay formation, z = 13 → 0</button>
