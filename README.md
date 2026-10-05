@@ -1,6 +1,6 @@
 # NGC 4594
 
-A live, in-browser model of the [Sombrero Galaxy](https://en.wikipedia.org/wiki/Sombrero_Galaxy) (M104), its dark matter halo, and the cosmic web it sits in. Scroll to zoom out from the galaxy to 150 Mpc of large-scale structure. Every frame is computed from one gravitational potential.
+A live, in-browser model of the [Sombrero Galaxy](https://en.wikipedia.org/wiki/Sombrero_Galaxy) (M104/NGC 4594), its dark matter halo, and the cosmic web it sits in. Scroll to zoom out from the galaxy to 150 Mpc of large-scale structure. Every frame is computed from one gravitational potential.
 
 **[Open the live page →](https://kotval.github.io/ngc4594/)**
 
