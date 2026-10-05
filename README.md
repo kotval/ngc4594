@@ -34,8 +34,6 @@ When OpenAI launched GPT-6 Astra, the announcement page led with a three.js gala
 
 It was underwhelming. So I told Claude to look up some papers and start working on this with me. I think this is much better, and I finally found a practical use for my physics education, yay!
 
-![Neighbour galaxies around the splashback radius](docs/halo.png)
-
 ## Files
 
 | File | What it is |
