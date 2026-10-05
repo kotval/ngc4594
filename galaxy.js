@@ -1326,12 +1326,18 @@ function scrollTarget() {
 }
 // One continuous dolly from 26 Mpc to the hero, driven by the intro clock (not by cosmic time, which runs a^1.5):
 // a constant rate in log distance, eased only at the two ends, so it never surges or stalls between scales.
-const INTRO_FROM = { d: 26000, el: 38, az: 70 }, INTRO_TO = { d: 52, el: 6, az: 0 };
+const INTRO_FROM = { d: 26000, el: 38, az: 70, film: 0, filmY: 0 }, INTRO_TO = STOPS.hero;   // lands exactly on the hero framing, so the hand-off to scroll control is seamless
+// Progress along the dolly: velocity ramps up and down with smoothstep shoulders, so speed and acceleration
+// are both continuous and reach zero at the ends (no perceptible "stop" when the camera arrives).
+const INTRO_EASE = (() => {
+  const N = 2048, ta = 0.2, v = (s) => smooth(0, ta, s) * smooth(1, 1 - ta, s), cum = new Float64Array(N + 1);
+  for (let i = 1; i <= N; i++) cum[i] = cum[i - 1] + (v((i - 0.5) / N)) / N;
+  for (let i = 0; i <= N; i++) cum[i] /= cum[N];
+  return (s) => { const x = clamp(s, 0, 1) * N, i = Math.min(N - 1, Math.floor(x)); return mixA(cum[i], cum[i + 1], x - i); };
+})();
 function introCam(s) {
-  const ta = 0.15, v = 1 / (1 - ta);             // trapezoidal velocity: ease in, constant rate, ease out
-  const e = s < ta ? v * s * s / (2 * ta) : s > 1 - ta ? 1 - v * (1 - s) ** 2 / (2 * ta) : v * (s - ta / 2);
-  const t = clamp(e, 0, 1);
-  return { d: Math.exp(mixA(Math.log(INTRO_FROM.d), Math.log(INTRO_TO.d), t)), el: mixA(INTRO_FROM.el, INTRO_TO.el, t), az: mixA(INTRO_FROM.az, INTRO_TO.az, t), film: 0, filmY: 0, scrim: 0 };
+  const t = INTRO_EASE(s);
+  return { d: Math.exp(mixA(Math.log(INTRO_FROM.d), Math.log(INTRO_TO.d), t)), el: mixA(INTRO_FROM.el, INTRO_TO.el, t), az: mixA(INTRO_FROM.az, INTRO_TO.az, t), film: mixA(INTRO_FROM.film, INTRO_TO.film, t), filmY: mixA(INTRO_FROM.filmY, INTRO_TO.filmY, t), scrim: 0 };
 }
 const cam = params.has('stop') ? { ...STOPS[params.get('stop')] } : { ...STOPS.hero };
 let webFlow = +(params.get('flow') || 0), webT = +(params.get('webt') || 0);   // exaggerated post-z=0 growth of the web, and its clock
@@ -1566,7 +1572,7 @@ rotationChart(); massFunctionChart(); paramTable();
 /* =====================================================================
    13. Main loop
    ===================================================================== */
-let hudT = -1e9, simT = 0, subT = 0, streamT = 0, dPhysPrev = 52, streamOn = 0, lssOn = 0, fadeIn = 0, gcVis = 0, stVis = 0;
+let camWasIntro = false, hudT = -1e9, simT = 0, subT = 0, streamT = 0, dPhysPrev = 52, streamOn = 0, lssOn = 0, fadeIn = 0, gcVis = 0, stVis = 0;
 const gen = streamBuilder();
 function stepStream() { if (!STREAM.ready) { gen.next(); return; } }
 setTimeout(function chunk() { if (!STREAM.ready) { for (let i = 0; i < 1; i++) gen.next(); setTimeout(chunk, 0); } }, 300);
@@ -1612,13 +1618,14 @@ function frame(now) {
   subTex.needsUpdate = true;
 
   // --- camera
-  const tgt = introOn ? introCam(clamp(intro.s, 0, 1)) : scrollTarget();
-  const k = introOn ? 1 : 1 - Math.exp(-dt * 2.6);
+  const tgt = introOn || camWasIntro ? introCam(clamp(intro.s, 0, 1)) : scrollTarget();
+  const k = introOn || camWasIntro ? 1 : 1 - Math.exp(-dt * 2.6);           // the frame the intro ends still lands exactly on its target
+  camWasIntro = introOn;
   cam.d = Math.exp(mixA(Math.log(cam.d), Math.log(tgt.d), k));
   cam.el = mixA(cam.el, tgt.el, k); cam.az = mixA(cam.az, tgt.az, k); cam.film = mixA(cam.film, small ? 0 : tgt.film, k); cam.filmY = mixA(cam.filmY ?? 0, tgt.filmY ?? 0, k);
   scrimEl.style.setProperty('--scrim', (tgt.scrim ?? 0).toFixed(3));
   const aspectBoost = camera.aspect < 1 ? Math.min(2.2, 0.85 / camera.aspect) : 1;
-  const d = cam.d * (introOn ? 1 : aspectBoost);
+  const d = cam.d * aspectBoost;
   const lssW = introOn ? 0 : smooth(25000, 90000, dPhysPrev);
   const webVis = introOn ? 0 : smooth(900, 6000, dPhysPrev) * (1 - lssW);   // the web-scale sway hands over to the one-way drift
   // drift ~0.4 deg/s at the default rate, one direction only; wrapped only when fully zoomed out (a 360 jump is invisible),
@@ -1629,6 +1636,7 @@ function frame(now) {
   camera.up.set(0, 1, 0); camera.lookAt(0, 0, 0);
   if (Math.abs(cam.film) > 1e-3 || Math.abs(cam.filmY) > 1e-3) camera.setViewOffset(W, H, cam.film * W, cam.filmY * H, W, H); else camera.clearViewOffset();
   camera.updateProjectionMatrix(); camera.updateMatrixWorld();
+  if (params.has('camlog')) (window.__camlog ||= []).push([+intro.s.toFixed(5), camera.position.x, camera.position.y, camera.position.z, cam.film, cam.filmY]);
 
   // --- uniforms
   const dPhys = d * a; dPhysPrev = dPhys;
